@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import difflib
 import hashlib
 import html
 import json
@@ -7,7 +8,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urldefrag
@@ -26,6 +27,14 @@ except Exception:  # pragma: no cover
     PdfReader = None
 
 
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+except Exception:  # pragma: no cover
+    pytesseract = None
+    convert_from_path = None
+
+
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 DOWNLOAD_DIR = DATA_DIR / "downloads"
@@ -39,6 +48,10 @@ START_URL = "https://www.pagcor.ph/regulatory/index.php"
 ALLOWED_PREFIX = "https://www.pagcor.ph/regulatory/"
 DOMAIN_RE = re.compile(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.I)
 logging.getLogger("pypdf").setLevel(logging.ERROR)
+
+OCR_MIN_PAGE_CHARS = int(os.getenv("PAGCOR_OCR_MIN_PAGE_CHARS", "40"))
+OCR_DPI = int(os.getenv("PAGCOR_OCR_DPI", "180"))
+OCR_LANG = os.getenv("PAGCOR_OCR_LANG", "eng")
 
 DATE_RE = re.compile(
     r"\b(?:as of\s+)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},\s+\d{4}\b",
@@ -66,6 +79,7 @@ class ResourceSnapshot:
     dates: list[str]
     checked_at: str
     local_path: str = ""
+    text_blocks: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -127,11 +141,59 @@ def extract_links(html: bytes, base_url: str) -> list[dict]:
     return sorted(unique.values(), key=lambda item: item["url"])
 
 
-def extract_html_text(html: bytes) -> str:
+def clean_soup(html: bytes) -> BeautifulSoup:
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
-    return normalize_text(soup.get_text(" ", strip=True))
+    return soup
+
+
+def extract_html_text(html: bytes) -> str:
+    return normalize_text(clean_soup(html).get_text(" ", strip=True))
+
+
+def make_text_block(label: str, text: str) -> dict:
+    normalized = normalize_text(text)
+    return {
+        "label": label,
+        "text": normalized,
+        "text_sha256": sha256_text(normalized),
+        "excerpt": normalized[:500],
+    }
+
+
+def extract_html_blocks(html: bytes) -> list[dict]:
+    soup = clean_soup(html)
+    main = soup.find("main") or soup.body or soup
+    blocks: list[dict] = []
+    current_title = "頁面開頭"
+    current_parts: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_parts
+        text = normalize_text(" ".join(current_parts))
+        if text:
+            blocks.append(make_text_block(current_title, text))
+        current_parts = []
+
+    for element in main.find_all(["h1", "h2", "h3", "h4", "p", "li", "td", "th"], recursive=True):
+        text = normalize_text(element.get_text(" ", strip=True))
+        if not text:
+            continue
+        if element.name in {"h1", "h2", "h3", "h4"}:
+            flush()
+            current_title = text[:120]
+        else:
+            current_parts.append(text)
+            if len(" ".join(current_parts)) > 2500:
+                flush()
+                current_title = f"{current_title}（續）"
+    flush()
+    if not blocks:
+        whole = extract_html_text(html)
+        for idx in range(0, len(whole), 2500):
+            blocks.append(make_text_block(f"文字區塊 {idx // 2500 + 1}", whole[idx:idx + 2500]))
+    return blocks
 
 
 def extract_title(html: bytes, fallback: str) -> str:
@@ -142,15 +204,60 @@ def extract_title(html: bytes, fallback: str) -> str:
     return normalize_text(h1.get_text(" ", strip=True)) if h1 else fallback
 
 
-def extract_pdf_text(path: Path) -> str:
+def ocr_pdf_pages(path: Path, page_numbers: list[int]) -> dict[int, str]:
+    if pytesseract is None or convert_from_path is None or not page_numbers:
+        return {}
+    results: dict[int, str] = {}
+    for page_number in page_numbers:
+        try:
+            images = convert_from_path(
+                str(path),
+                dpi=OCR_DPI,
+                first_page=page_number,
+                last_page=page_number,
+                fmt="png",
+            )
+            if images:
+                results[page_number] = normalize_text(pytesseract.image_to_string(images[0], lang=OCR_LANG))
+        except Exception:
+            continue
+    return results
+
+
+def extract_pdf_pages(path: Path) -> list[dict]:
     if PdfReader is None:
-        return ""
+        return []
     try:
         reader = PdfReader(str(path))
-        chunks = [(page.extract_text() or "") for page in reader.pages]
-        return normalize_text("\n".join(chunks))
     except Exception:
-        return ""
+        return []
+    pages = []
+    low_text_pages: list[int] = []
+    raw_text_by_page: dict[int, str] = {}
+    for idx, page in enumerate(reader.pages, 1):
+        try:
+            text = normalize_text(page.extract_text() or "")
+        except Exception:
+            text = ""
+        raw_text_by_page[idx] = text
+        if len(text) < OCR_MIN_PAGE_CHARS:
+            low_text_pages.append(idx)
+
+    ocr_text_by_page = ocr_pdf_pages(path, low_text_pages)
+    for idx in range(1, len(reader.pages) + 1):
+        text = raw_text_by_page.get(idx, "")
+        source = "文字抽取"
+        ocr_text = ocr_text_by_page.get(idx, "")
+        if len(ocr_text) > len(text):
+            text = ocr_text
+            source = "OCR"
+        block = make_text_block(f"? {idx} ?", text)
+        block["source"] = source
+        pages.append(block)
+    return pages
+
+def extract_pdf_text(path: Path) -> str:
+    return normalize_text("\n".join(block.get("text", "") for block in extract_pdf_pages(path)))
 
 
 def save_download(url: str, content: bytes, digest: str) -> Path:
@@ -177,16 +284,19 @@ def snapshot_resource(session: requests.Session, url: str, checked_at: str, time
     links: list[dict] = []
     text = ""
     local_path = ""
+    text_blocks: list[dict] = []
 
     if kind == "html":
         links = extract_links(content, url)
         title = extract_title(content, title)
-        text = extract_html_text(content)
+        text_blocks = extract_html_blocks(content)
+        text = normalize_text("\n".join(block.get("text", "") for block in text_blocks))
     else:
         local = save_download(url, content, digest)
         local_path = str(local.relative_to(ROOT))
         if kind == "pdf":
-            text = extract_pdf_text(local)
+            text_blocks = extract_pdf_pages(local)
+            text = normalize_text("\n".join(block.get("text", "") for block in text_blocks))
 
     domains = sorted(set(m.group(0).lower() for m in DOMAIN_RE.finditer(text)))
     dates = sorted(set(m.group(0) for m in DATE_RE.finditer(text)))
@@ -205,6 +315,7 @@ def snapshot_resource(session: requests.Session, url: str, checked_at: str, time
         dates=dates,
         checked_at=checked_at,
         local_path=local_path,
+        text_blocks=text_blocks,
     )
 
 
@@ -215,6 +326,8 @@ def load_state() -> dict:
 
 
 def snapshot_from_dict(data: dict) -> ResourceSnapshot:
+    data = dict(data)
+    data.setdefault("text_blocks", [])
     return ResourceSnapshot(**data)
 
 
@@ -316,6 +429,7 @@ def discover_and_snapshot() -> RunResult:
             continue
 
         resources[url] = snapshot
+        failures = [failure for failure in failures if failure.get("url") != url]
         if snapshot.kind == "html":
             for link in snapshot.links:
                 linked_url = link["url"]
@@ -401,6 +515,66 @@ def business_impact(snapshot: ResourceSnapshot, severity: str, change_type: str,
     return "低風險變動，已留痕供追溯。"
 
 
+
+def short_text(text: str, limit: int = 260) -> str:
+    text = normalize_text(text)
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def diff_text_snippets(old_text: str, new_text: str, limit: int = 4) -> tuple[list[str], list[str]]:
+    old_words = normalize_text(old_text).split()
+    new_words = normalize_text(new_text).split()
+    matcher = difflib.SequenceMatcher(None, old_words, new_words, autojunk=False)
+    added: list[str] = []
+    removed: list[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag in {"replace", "delete"} and len(removed) < limit:
+            snippet = short_text(" ".join(old_words[i1:i2]))
+            if snippet:
+                removed.append(snippet)
+        if tag in {"replace", "insert"} and len(added) < limit:
+            snippet = short_text(" ".join(new_words[j1:j2]))
+            if snippet:
+                added.append(snippet)
+        if len(added) >= limit and len(removed) >= limit:
+            break
+    return added, removed
+
+
+def summarize_text_block_changes(old_blocks: list[dict], new_blocks: list[dict], limit: int = 8) -> list[dict]:
+    if not old_blocks or not new_blocks:
+        return []
+    old_by_label = {block.get("label", ""): block for block in old_blocks}
+    new_by_label = {block.get("label", ""): block for block in new_blocks}
+    details: list[dict] = []
+
+    for label in sorted(set(new_by_label) - set(old_by_label)):
+        block = new_by_label[label]
+        details.append({"label": label, "type": "頁面開頭", "added": [short_text(block.get("text", ""))], "removed": []})
+        if len(details) >= limit:
+            return details
+
+    for label in sorted(set(old_by_label) - set(new_by_label)):
+        block = old_by_label[label]
+        details.append({"label": label, "type": "頁面開頭", "added": [], "removed": [short_text(block.get("text", ""))]})
+        if len(details) >= limit:
+            return details
+
+    for label in sorted(set(old_by_label) & set(new_by_label)):
+        old_block = old_by_label[label]
+        new_block = new_by_label[label]
+        if old_block.get("text_sha256") == new_block.get("text_sha256"):
+            continue
+        added, removed = diff_text_snippets(old_block.get("text", ""), new_block.get("text", ""))
+        details.append({"label": label, "type": "頁面開頭", "added": added, "removed": removed})
+        if len(details) >= limit:
+            return details
+    return details
+
 def compare_snapshots(previous: dict, current: RunResult) -> list[dict]:
     prev_resources = previous.get("resources", {})
     changes: list[dict] = []
@@ -417,11 +591,18 @@ def compare_snapshots(previous: dict, current: RunResult) -> list[dict]:
             content_changed = old.get("sha256") != snapshot.sha256 or old.get("text_sha256") != snapshot.text_sha256
 
         if content_changed:
+            old_size = int(old.get("size") or 0)
             changes.append(
                 {
                     "type": "content_changed",
                     "url": url,
                     "snapshot": snapshot,
+                    "old_size": old_size,
+                    "new_size": snapshot.size,
+                    "size_delta": snapshot.size - old_size,
+                    "binary_changed": old.get("sha256") != snapshot.sha256,
+                    "text_changed": old.get("text_sha256") != snapshot.text_sha256,
+                    "detail_changes": summarize_text_block_changes(old.get("text_blocks", []), snapshot.text_blocks),
                     "added_domains": sorted(set(snapshot.domains) - set(old.get("domains", []))),
                     "removed_domains": sorted(set(old.get("domains", [])) - set(snapshot.domains)),
                     "added_dates": sorted(set(snapshot.dates) - set(old.get("dates", []))),
@@ -445,12 +626,12 @@ def compare_snapshots(previous: dict, current: RunResult) -> list[dict]:
     if not current.max_resources_hit:
         for url, old in prev_resources.items():
             if url not in current.resources:
-                old_snapshot = ResourceSnapshot(**old)
+                old_snapshot = snapshot_from_dict(old)
                 changes.append({"type": "removed", "url": url, "snapshot": old_snapshot})
 
     for failure in current.failures:
-        if failure["url"] in prev_resources:
-            old_snapshot = ResourceSnapshot(**prev_resources[failure["url"]])
+        if failure["url"] in prev_resources and failure["url"] not in current.resources:
+            old_snapshot = snapshot_from_dict(prev_resources[failure["url"]])
             changes.append({"type": "fetch_failed", "url": failure["url"], "snapshot": old_snapshot, "error": failure["error"]})
 
     for change in changes:
@@ -478,21 +659,77 @@ def change_label(change_type: str) -> str:
     }.get(change_type, change_type)
 
 
+def format_bytes(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.2f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} bytes"
+
+
+def plain_change_summary(change: dict) -> str:
+    change_type = change["type"]
+    if change_type == "added":
+        return "這是本次第一次被監控到的新資源。請確認它是否為新的公告、表單、名單或統計資料。"
+    if change_type == "removed":
+        return "這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。"
+    if change_type == "fetch_failed":
+        return "這次無法成功讀取既有資源，因此不代表內容真的改變；需要下次重跑或人工開啟確認。"
+    if change_type == "links_changed":
+        added = len(change.get("added_links", []))
+        removed = len(change.get("removed_links", []))
+        return f"來源頁面的連結清單改變：新增 {added} 個連結、移除 {removed} 個連結。"
+    if change_type == "content_changed":
+        parts = []
+        if change.get("binary_changed"):
+            parts.append("檔案內容雜湊不同")
+        if change.get("text_changed"):
+            parts.append("可抽取文字不同")
+        if change.get("size_delta"):
+            direction = "增加" if change["size_delta"] > 0 else "減少"
+            parts.append(f"大小{direction} {format_bytes(abs(change['size_delta']))}")
+        if change.get("added_dates") or change.get("removed_dates"):
+            parts.append("日期文字有變化")
+        if change.get("added_domains") or change.get("removed_domains"):
+            parts.append("網域文字有變化")
+        return "、".join(parts) + "。" if parts else "內容指紋改變，但未抽取到可分類的日期、網域或連結差異。"
+    return "系統偵測到變動，請依來源內容人工複核。"
 def render_change(lines: list[str], idx: int, change: dict, include_details: bool = True) -> None:
     snapshot = change["snapshot"]
     lines += [
         f"### {idx}. [{change['severity']}] {snapshot.title}",
         "",
         f"- 變動：{change_label(change['type'])}",
+        f"- 實際狀況：{plain_change_summary(change)}",
         f"- 來源：{snapshot.url}",
         f"- 格式：{snapshot.kind}",
         f"- 可能影響：{change['impact']}",
     ]
     if change["type"] == "content_changed":
+        lines.append(
+            f"- 檔案大小：原本 {format_bytes(change.get('old_size', 0))}，現在 {format_bytes(change.get('new_size', 0))}，差異 {change.get('size_delta', 0):+,} bytes"
+        )
+        lines.append(f"- 內容指紋：{'檔案內容有變' if change.get('binary_changed') else '檔案內容未變'}；{'可抽取文字有變' if change.get('text_changed') else '可抽取文字未變'}")
         if change.get("added_dates") or change.get("removed_dates"):
             lines.append(f"- 日期變動：新增 {format_list(change.get('added_dates', []))}；移除 {format_list(change.get('removed_dates', []))}")
+        else:
+            lines.append("- 日期變動：未偵測到新增或移除的日期文字")
         if change.get("added_domains") or change.get("removed_domains"):
             lines.append(f"- Domain 變動：新增 {format_list(change.get('added_domains', []))}；移除 {format_list(change.get('removed_domains', []))}")
+        else:
+            lines.append("- Domain 變動：未偵測到新增或移除的網域文字")
+        detail_changes = change.get("detail_changes", [])
+        if detail_changes:
+            lines.append("- 變動位置與文字片段：")
+            for detail in detail_changes:
+                lines.append(f"  - {detail.get('label', '未知位置')}：{detail.get('type', '文字變更')}")
+                for item in detail.get("added", [])[:4]:
+                    lines.append(f"    - 新增：{item}")
+                for item in detail.get("removed", [])[:4]:
+                    lines.append(f"    - 移除：{item}")
+        else:
+            lines.append("- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。")
+        lines.append("- 判讀方式：若只有檔案雜湊或大小改變，可能是 PDF 重新輸出、壓縮、metadata 更新，仍建議打開來源確認版面與內容。")
     if change["type"] == "links_changed" and include_details:
         added = [item["text"] or item["url"] for item in change.get("added_links", [])]
         removed = [item["text"] or item["url"] for item in change.get("removed_links", [])]
@@ -666,5 +903,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
