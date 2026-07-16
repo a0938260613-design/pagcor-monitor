@@ -7,3 +7,6 @@ reports/*.txt
 reports/20*.html
 
 reports/
+
+logs/
+run.lock

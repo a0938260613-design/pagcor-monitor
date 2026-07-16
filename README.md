@@ -21,9 +21,14 @@ Outputs:
 
 - `data/state.json` - latest known snapshot
 - `data/downloads/` - downloaded files by hash
-- `reports/YYYY-MM-DD_HH-mm-ss.md` - readable Markdown change report`r`n- `reports/latest.html` - browser-friendly latest report
+- `reports/YYYY-MM-DD_HH-mm-ss.md` - readable Markdown change report
+- `reports/latest.html` - browser-friendly latest report
 
-## Open the report`r`n`r`nIf `.md` files do not open cleanly on Windows, open `reports/latest.html` in a browser.`r`n`r`n## Telegram
+## Open the report
+
+If `.md` files do not open cleanly on Windows, open `reports/latest.html` in a browser.
+
+## Telegram
 
 ```powershell
 python send_telegram.py
@@ -98,3 +103,25 @@ publish_pages.bat
 ```
 
 This runs the monitor, updates `docs/`, commits the public report, and pushes it to GitHub.
+
+## Unattended local scheduling and resume
+
+This project is intended to run from the local Windows machine. GitHub Pages is only used to share the generated HTML report.
+
+Reliability behavior:
+
+- `data/state.json` is the last completed baseline.
+- `data/checkpoint.json` is written during a run.
+- If the task stops before completion, the next run resumes from `data/checkpoint.json`.
+- The official state and report are updated only after the crawl finishes.
+- If `PAGCOR_MAX_PAGES` is reached, the monitor will not mark missing old URLs as removed.
+
+For Windows Task Scheduler:
+
+- Enable `Run whether user is logged on or not`.
+- Enable `Run with highest privileges` if git or network credentials require it.
+- Set `Start in` to this project folder.
+- Set the timeout to at least 30 minutes.
+- Configure the task not to start a new instance if the previous run is still active.
+
+Use `publish_pages.bat` for the daily task when GitHub Pages is configured. It runs the monitor, updates `docs/`, commits, and pushes the HTML report.

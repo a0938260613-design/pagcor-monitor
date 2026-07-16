@@ -33,6 +33,7 @@ REPORT_DIR = ROOT / "reports"
 PAGES_DIR = ROOT / "docs"
 PAGES_ARCHIVE_DIR = PAGES_DIR / "reports"
 STATE_PATH = DATA_DIR / "state.json"
+CHECKPOINT_PATH = DATA_DIR / "checkpoint.json"
 
 START_URL = "https://www.pagcor.ph/regulatory/index.php"
 ALLOWED_PREFIX = "https://www.pagcor.ph/regulatory/"
@@ -213,6 +214,41 @@ def load_state() -> dict:
     return {"meta": {}, "resources": {}}
 
 
+def snapshot_from_dict(data: dict) -> ResourceSnapshot:
+    return ResourceSnapshot(**data)
+
+
+def save_checkpoint(resources: dict[str, ResourceSnapshot], failures: list[dict], queue: list[str], queued: set[str], seen: set[str], checked_at: str, max_resources: int) -> None:
+    payload = {
+        "checked_at": checked_at,
+        "max_resources": max_resources,
+        "resources": {url: asdict(snapshot) for url, snapshot in sorted(resources.items())},
+        "failures": failures,
+        "queue": queue,
+        "queued": sorted(queued),
+        "seen": sorted(seen),
+    }
+    CHECKPOINT_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def load_checkpoint(max_resources: int) -> dict | None:
+    if not CHECKPOINT_PATH.exists():
+        return None
+    try:
+        payload = json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if int(payload.get("max_resources", 0)) != max_resources:
+        clear_checkpoint()
+        return None
+    return payload
+
+
+def clear_checkpoint() -> None:
+    if CHECKPOINT_PATH.exists():
+        CHECKPOINT_PATH.unlink()
+
+
 def save_state(result: RunResult) -> None:
     DATA_DIR.mkdir(exist_ok=True)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -249,11 +285,21 @@ def discover_and_snapshot() -> RunResult:
     session = requests.Session()
     session.headers.update({"User-Agent": "PAGCOR regulatory monitor/1.0"})
 
-    queue = [start_url]
-    queued = {start_url}
-    seen: set[str] = set()
-    resources: dict[str, ResourceSnapshot] = {}
-    failures: list[dict] = []
+    checkpoint = load_checkpoint(max_resources)
+    if checkpoint:
+        checked_at = checkpoint.get("checked_at", checked_at)
+        queue = list(checkpoint.get("queue", []))
+        queued = set(checkpoint.get("queued", []))
+        seen = set(checkpoint.get("seen", []))
+        resources = {url: snapshot_from_dict(item) for url, item in checkpoint.get("resources", {}).items()}
+        failures = list(checkpoint.get("failures", []))
+        print(f"Resuming checkpoint: {len(resources)} resources, {len(queue)} queued")
+    else:
+        queue = [start_url]
+        queued = {start_url}
+        seen: set[str] = set()
+        resources: dict[str, ResourceSnapshot] = {}
+        failures: list[dict] = []
 
     while queue and len(seen) < max_resources:
         url = queue.pop(0)
@@ -265,6 +311,7 @@ def discover_and_snapshot() -> RunResult:
         except Exception as exc:
             failures.append({"url": url, "error": str(exc), "checked_at": checked_at})
             print(f"Failed: {url} ({exc})")
+            save_checkpoint(resources, failures, queue, queued, seen, checked_at, max_resources)
             time.sleep(delay)
             continue
 
@@ -275,9 +322,13 @@ def discover_and_snapshot() -> RunResult:
                 if linked_url not in seen and linked_url not in queued:
                     queue.append(linked_url)
                     queued.add(linked_url)
+        save_checkpoint(resources, failures, queue, queued, seen, checked_at, max_resources)
         time.sleep(delay)
 
-    return RunResult(resources=resources, failures=failures, max_resources_hit=bool(queue), checked_at=checked_at)
+    result = RunResult(resources=resources, failures=failures, max_resources_hit=bool(queue), checked_at=checked_at)
+    if not result.max_resources_hit:
+        clear_checkpoint()
+    return result
 
 
 def evidence_text(snapshot: ResourceSnapshot, change: dict | None = None) -> str:
@@ -602,7 +653,10 @@ def main() -> None:
     run = discover_and_snapshot()
     changes = compare_snapshots(previous, run)
     report = render_reports(changes, run)
-    save_state(run)
+    if not run.max_resources_hit:
+        save_state(run)
+    else:
+        print("State not updated because crawl did not finish all queued resources.")
     print(f"Report: {report}")
     print(f"Resources: {len(run.resources)}")
     print(f"Failures: {len(run.failures)}")
@@ -612,4 +666,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
