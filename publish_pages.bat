@@ -15,6 +15,9 @@ if not "%MONITOR_EXIT%"=="0" (
   del "%LOCKFILE%"
   exit /b %MONITOR_EXIT%
 )
+python send_telegram.py >> logs\publish_pages.log 2>&1
+set TG_EXIT=%errorlevel%
+if not "%TG_EXIT%"=="0" echo %date% %time% Telegram failed with %TG_EXIT%>> logs\publish_pages.log
 git add docs README.md MONITORING_STRATEGY.md monitor.py send_telegram.py requirements.txt run_daily.bat publish_pages.bat .gitignore .env.example >> logs\publish_pages.log 2>&1
 git commit -m "Update PAGCOR report %date% %time%" >> logs\publish_pages.log 2>&1
 if errorlevel 1 echo %date% %time% No git changes to commit.>> logs\publish_pages.log

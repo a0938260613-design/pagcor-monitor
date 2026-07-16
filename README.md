@@ -102,7 +102,7 @@ Daily publishing:
 publish_pages.bat
 ```
 
-This runs the monitor, updates `docs/`, commits the public report, and pushes it to GitHub.
+This runs the monitor, sends the Telegram summary (if `.env` has bot token/chat id), updates `docs/`, commits the public report, and pushes it to GitHub.
 
 ## Unattended local scheduling and resume
 
@@ -124,4 +124,4 @@ For Windows Task Scheduler:
 - Set the timeout to at least 30 minutes.
 - Configure the task not to start a new instance if the previous run is still active.
 
-Use `publish_pages.bat` for the daily task when GitHub Pages is configured. It runs the monitor, updates `docs/`, commits, and pushes the HTML report.
+Use `publish_pages.bat` for the daily task when GitHub Pages is configured. It runs the monitor, sends the Telegram summary, updates `docs/`, commits, and pushes the HTML report.
