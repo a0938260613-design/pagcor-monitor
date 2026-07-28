@@ -796,43 +796,102 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
 
 
 
+COLLAPSIBLE_REPORT_SECTIONS = {"例行檢視", "低風險留痕"}
+
+
 def markdown_to_basic_html(markdown: str) -> str:
-    body_lines = []
+    """Render the report Markdown as HTML with a quick-nav bar and collapsible sections.
+
+    Every ### item defaults to collapsed (just the [Severity] title shows) and
+    the Medium/Low sections collapse as a whole, so a 76-change report opens as
+    a scannable table of contents instead of one long scroll.
+    """
+    raw_lines = [line.rstrip() for line in markdown.splitlines()]
+
+    # Pass 1: find ## section headings and count the ### items under each, for the nav bar.
+    nav_sections: list[tuple[str, str, int]] = []
+    current_heading: str | None = None
+    current_count = 0
+
+    def flush_nav() -> None:
+        if current_heading is not None:
+            nav_sections.append((f"sec-{len(nav_sections)}", current_heading, current_count))
+
+    for line in raw_lines:
+        if line.startswith("## "):
+            flush_nav()
+            current_heading = line[3:]
+            current_count = 0
+        elif line.startswith("### ") and current_heading is not None:
+            current_count += 1
+    flush_nav()
+    section_ids = {heading: sec_id for sec_id, heading, _ in nav_sections}
+
+    # Pass 2: convert to HTML, wrapping ### items and Medium/Low sections in <details>.
+    body_lines: list[str] = []
     in_list = False
-    for raw_line in markdown.splitlines():
-        line = raw_line.rstrip()
+    item_open = False
+    section_open = False
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            body_lines.append("</ul>")
+            in_list = False
+
+    def close_item() -> None:
+        nonlocal item_open
+        close_list()
+        if item_open:
+            body_lines.append("</details>")
+            item_open = False
+
+    def close_section() -> None:
+        nonlocal section_open
+        close_item()
+        if section_open:
+            body_lines.append("</details>")
+            section_open = False
+
+    for line in raw_lines:
         if not line:
-            if in_list:
-                body_lines.append("</ul>")
-                in_list = False
+            # Note: a blank line always follows "### heading" (standard Markdown),
+            # so closing the item here would end it before its bullet list ever
+            # renders. Items only close at the next heading / end of document.
+            close_list()
             continue
         if line.startswith("# "):
-            if in_list:
-                body_lines.append("</ul>")
-                in_list = False
+            close_section()
             body_lines.append(f"<h1>{html.escape(line[2:])}</h1>")
+            if nav_sections:
+                links = " · ".join(
+                    f'<a href="#{sec_id}">{html.escape(heading)}{f" ({count})" if count else ""}</a>'
+                    for sec_id, heading, count in nav_sections
+                )
+                body_lines.append(f'<nav class="quicknav">{links}</nav>')
         elif line.startswith("## "):
-            if in_list:
-                body_lines.append("</ul>")
-                in_list = False
-            body_lines.append(f"<h2>{html.escape(line[3:])}</h2>")
+            close_section()
+            heading = line[3:]
+            sec_id = section_ids.get(heading, "")
+            if heading in COLLAPSIBLE_REPORT_SECTIONS:
+                body_lines.append(f'<details id="{sec_id}" class="section"><summary><h2>{html.escape(heading)}</h2></summary>')
+                section_open = True
+            else:
+                body_lines.append(f'<h2 id="{sec_id}">{html.escape(heading)}</h2>')
         elif line.startswith("### "):
-            if in_list:
-                body_lines.append("</ul>")
-                in_list = False
-            body_lines.append(f"<h3>{html.escape(line[4:])}</h3>")
+            close_item()
+            body_lines.append(f'<details class="item"><summary>{html.escape(line[4:])}</summary>')
+            item_open = True
         elif line.startswith("- "):
             if not in_list:
                 body_lines.append("<ul>")
                 in_list = True
             body_lines.append(f"<li>{html.escape(line[2:])}</li>")
         else:
-            if in_list:
-                body_lines.append("</ul>")
-                in_list = False
+            close_list()
             body_lines.append(f"<p>{html.escape(line)}</p>")
-    if in_list:
-        body_lines.append("</ul>")
+    close_section()
+
     return """<!doctype html>
 <html lang=\"zh-Hant\">
 <head>
@@ -841,8 +900,17 @@ def markdown_to_basic_html(markdown: str) -> str:
 <title>PAGCOR Regulatory Daily Monitor</title>
 <style>
 body{font-family:Arial,'Microsoft JhengHei',sans-serif;line-height:1.6;margin:32px;max-width:1100px;color:#1f2937;background:#f8fafc}
-h1,h2,h3{line-height:1.25;color:#111827}h1{font-size:28px}h2{font-size:22px;margin-top:28px;border-bottom:1px solid #d1d5db;padding-bottom:6px}h3{font-size:18px;margin-top:22px}
+h1,h2,h3{line-height:1.25;color:#111827}h1{font-size:28px}h2{font-size:22px;margin-top:28px;border-bottom:1px solid #d1d5db;padding-bottom:6px;display:inline-block}h3{font-size:18px;margin-top:22px}
 ul{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px 20px 14px 34px}li{margin:5px 0}p{background:#fff;border-left:4px solid #9ca3af;padding:10px 14px}code{background:#e5e7eb;padding:2px 5px;border-radius:4px}
+nav.quicknav{position:sticky;top:0;background:#f8fafc;padding:10px 0;margin-bottom:8px;border-bottom:1px solid #d1d5db;font-size:14px}
+nav.quicknav a{color:#1d4ed8;text-decoration:none;margin-right:4px}nav.quicknav a:hover{text-decoration:underline}
+details.item{background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px;padding:4px 14px}
+details.item summary{cursor:pointer;font-weight:600;padding:8px 0;list-style:revert}
+details.item[open] summary{border-bottom:1px solid #e5e7eb;margin-bottom:8px}
+details.section summary{cursor:pointer;list-style:none}
+details.section summary h2{display:inline}
+details.section summary::before{content:"▶ ";font-size:14px;color:#6b7280}
+details.section[open] summary::before{content:"▼ "}
 </style>
 </head>
 <body>

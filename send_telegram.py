@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
+import argparse
 import os
-import sys
 from pathlib import Path
 
 import requests
@@ -36,15 +36,29 @@ def telegram_chat_ids() -> list[str]:
     return chat_ids
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("report_path", nargs="?", default=None, help="Report file to send (defaults to reports/telegram_summary.txt)")
+    parser.add_argument(
+        "--chat-id",
+        dest="chat_id",
+        default=None,
+        help="Send only to this chat id, ignoring TELEGRAM_CHAT_ID/TELEGRAM_CHAT_IDS. "
+        "For manual testing only — run_daily.bat/publish_pages.bat never pass this, so the twice-daily automation is unaffected.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     if load_dotenv:
         load_dotenv(ROOT / ".env")
+    args = parse_args()
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_ids = telegram_chat_ids()
+    chat_ids = [args.chat_id] if args.chat_id else telegram_chat_ids()
     if not token or not chat_ids:
         raise SystemExit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID/TELEGRAM_CHAT_IDS in .env")
 
-    report_path = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "reports" / "telegram_summary.txt"
+    report_path = Path(args.report_path) if args.report_path else ROOT / "reports" / "telegram_summary.txt"
     text = trim_for_telegram(report_path.read_text(encoding="utf-8"))
     for chat_id in chat_ids:
         payload = {
