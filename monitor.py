@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import base64
 import difflib
 import hashlib
 import html
@@ -10,7 +11,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse, urldefrag
 
@@ -34,6 +35,11 @@ try:
 except Exception:  # pragma: no cover
     pytesseract = None
     convert_from_path = None
+
+try:
+    import fitz  # PyMuPDF - renders PDF pages to images for report thumbnails
+except Exception:  # pragma: no cover
+    fitz = None
 
 
 ROOT = Path(__file__).resolve().parent
@@ -63,6 +69,9 @@ REGULATORY_ENTITY_RE = re.compile(
     re.I,
 )
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+PAGE_LABEL_RE = re.compile(r"^第 (\d+) 頁$")
+THUMBNAIL_MAX_WIDTH_PX = 700
+MARKDOWN_IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\((.+)\)$")
 
 
 @dataclass
@@ -266,6 +275,26 @@ def extract_pdf_text(path: Path) -> str:
     return normalize_text("\n".join(block.get("text", "") for block in extract_pdf_pages(path)))
 
 
+def render_pdf_page_thumbnail(pdf_path: Path, page_number: int, max_width_px: int = THUMBNAIL_MAX_WIDTH_PX) -> str | None:
+    """Render one PDF page to a base64 PNG data URI, for embedding directly in
+    the HTML report so a reader can see the changed page without opening the
+    file. Returns None (not raised) on any failure - missing library, missing
+    file, out-of-range page - so a thumbnail miss never breaks report generation."""
+    if fitz is None or not pdf_path.exists():
+        return None
+    try:
+        with fitz.open(pdf_path) as doc:
+            if page_number < 1 or page_number > len(doc):
+                return None
+            page = doc[page_number - 1]
+            zoom = max_width_px / page.rect.width if page.rect.width else 1.0
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            png_bytes = pixmap.tobytes("png")
+        return "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
+    except Exception:
+        return None
+
+
 def save_download(url: str, content: bytes, digest: str) -> Path:
     suffix = Path(urlparse(url).path).suffix.lower() or ".bin"
     path = DOWNLOAD_DIR / f"{digest}{suffix}"
@@ -368,7 +397,7 @@ def clear_checkpoint() -> None:
         CHECKPOINT_PATH.unlink()
 
 
-def save_state(result: RunResult) -> None:
+def save_state(result: RunResult, recent_removals: dict | None = None) -> None:
     DATA_DIR.mkdir(exist_ok=True)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     serializable = {url: asdict(snapshot) for url, snapshot in sorted(result.resources.items())}
@@ -381,6 +410,7 @@ def save_state(result: RunResult) -> None:
         },
         "resources": serializable,
         "failures": result.failures,
+        "recent_removals": recent_removals or {},
     }
     STATE_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -462,7 +492,17 @@ def evidence_text(snapshot: ResourceSnapshot, change: dict | None = None) -> str
     return " ".join(parts).lower()
 
 
-def severity_for(snapshot: ResourceSnapshot, change_type: str, change: dict | None = None) -> str:
+def classify_severity(snapshot: ResourceSnapshot, change_type: str, change: dict | None = None) -> tuple[str, str | None]:
+    """Return (severity, reason). reason is the matched keyword/signal, so the
+    report can show readers *why* something was classified the way it was,
+    instead of just a bare label they have to trust blindly."""
+    if change_type == "resurfaced":
+        # This isn't a real editorial change (see build_recent_removals) - it's
+        # our own crawl having briefly missed a resource that was always there.
+        # Force it to Low regardless of what keywords the title matches, so it
+        # never competes for attention with genuine new content.
+        return "Low", None
+
     text = evidence_text(snapshot, change)
     critical_patterns = [
         "cancelled",
@@ -489,20 +529,29 @@ def severity_for(snapshot: ResourceSnapshot, change_type: str, change: dict | No
     ]
     medium_patterns = ["manual", "guideline", "form", "technical standard", "standard"]
 
-    if any(pattern in text for pattern in critical_patterns):
-        return "Critical"
     if change and (change.get("added_domains") or change.get("removed_domains")):
-        return "Critical"
-    if any(pattern in text for pattern in high_patterns):
-        return "High"
-    if any(pattern in text for pattern in medium_patterns):
-        return "Medium"
+        return "Critical", "網域清單變動"
+    for pattern in critical_patterns:
+        if pattern in text:
+            return "Critical", pattern
+    for pattern in high_patterns:
+        if pattern in text:
+            return "High", pattern
+    for pattern in medium_patterns:
+        if pattern in text:
+            return "Medium", pattern
     if snapshot.kind in {"pdf", "excel", "document", "csv"} and change_type in {"added", "content_changed"}:
-        return "Medium"
-    return "Low"
+        return "Medium", None
+    return "Low", None
+
+
+def severity_for(snapshot: ResourceSnapshot, change_type: str, change: dict | None = None) -> str:
+    return classify_severity(snapshot, change_type, change)[0]
 
 
 def business_impact(snapshot: ResourceSnapshot, severity: str, change_type: str, change: dict) -> str:
+    if change_type == "resurfaced":
+        return "非官方異動，是本系統爬取不穩定造成的暫時性遺漏，已自動修正基準，不需要人工處理。"
     text = evidence_text(snapshot, change)
     if "cancelled" in text:
         return "可能涉及業者資格取消或市場准入狀態變化，需優先人工複核。"
@@ -536,6 +585,17 @@ def readable_title(snapshot: ResourceSnapshot) -> str:
     stem = stem.replace("_", " ").replace("-", " ")
     stem = re.sub(r"\s+", " ", stem).strip()
     return stem or raw
+
+
+def first_excerpt(snapshot: ResourceSnapshot, limit: int = 140) -> str:
+    """First readable snippet of a resource's extracted text, for added/removed
+    items that have no diff to show. Falls back to "" (caller decides what to
+    say) when text extraction produced nothing, e.g. an un-OCR'd scanned PDF."""
+    for block in snapshot.text_blocks or []:
+        text = normalize_text(block.get("excerpt") or block.get("text") or "")
+        if text:
+            return short_text(text, limit)
+    return ""
 
 
 def short_text(text: str, limit: int = 260) -> str:
@@ -597,6 +657,43 @@ def summarize_text_block_changes(old_blocks: list[dict], new_blocks: list[dict],
             return details
     return details
 
+RESURFACE_WINDOW_DAYS = 7
+
+
+def parse_checked_at(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def is_recently_removed(recent_removals: dict, url: str, now: datetime, window_days: int = RESURFACE_WINDOW_DAYS) -> bool:
+    removed_at = parse_checked_at(recent_removals.get(url, ""))
+    if not removed_at:
+        return False
+    return timedelta(0) <= (now - removed_at) <= timedelta(days=window_days)
+
+
+def build_recent_removals(previous: dict, changes: list[dict], checked_at: str) -> dict:
+    """Roll forward the "recently removed" ledger used to detect resurfaced resources.
+
+    Keeps entries within RESURFACE_WINDOW_DAYS, drops URLs that resurfaced this
+    run (they've served their purpose), and records this run's new removals.
+    """
+    now = parse_checked_at(checked_at) or datetime.now()
+    updated: dict[str, str] = {}
+    for url, ts in previous.get("recent_removals", {}).items():
+        removed_at = parse_checked_at(ts)
+        if removed_at and (now - removed_at) <= timedelta(days=RESURFACE_WINDOW_DAYS):
+            updated[url] = ts
+    for change in changes:
+        if change["type"] == "removed":
+            updated[change["url"]] = checked_at
+        elif change["type"] == "resurfaced":
+            updated.pop(change["url"], None)
+    return updated
+
+
 def crawl_incomplete(previous: dict, current: RunResult, threshold: float = 0.85, min_baseline: int = 20) -> bool:
     """True when this run fetched far fewer resources than the last baseline.
 
@@ -610,14 +707,24 @@ def crawl_incomplete(previous: dict, current: RunResult, threshold: float = 0.85
     return len(current.resources) < threshold * prev_count
 
 
-def compare_snapshots(previous: dict, current: RunResult, skip_removed_detection: bool = False) -> list[dict]:
+def compare_snapshots(
+    previous: dict,
+    current: RunResult,
+    skip_removed_detection: bool = False,
+    recent_removals: dict | None = None,
+) -> list[dict]:
     prev_resources = previous.get("resources", {})
+    recent_removals = recent_removals or {}
+    now = parse_checked_at(current.checked_at) or datetime.now()
     changes: list[dict] = []
 
     for url, snapshot in current.resources.items():
         old = prev_resources.get(url)
         if not old:
-            changes.append({"type": "added", "url": url, "snapshot": snapshot})
+            if is_recently_removed(recent_removals, url, now):
+                changes.append({"type": "resurfaced", "url": url, "snapshot": snapshot, "removed_at": recent_removals[url]})
+            else:
+                changes.append({"type": "added", "url": url, "snapshot": snapshot})
             continue
 
         if snapshot.kind == "html":
@@ -638,6 +745,7 @@ def compare_snapshots(previous: dict, current: RunResult, skip_removed_detection
                     "binary_changed": old.get("sha256") != snapshot.sha256,
                     "text_changed": old.get("text_sha256") != snapshot.text_sha256,
                     "detail_changes": summarize_text_block_changes(old.get("text_blocks", []), snapshot.text_blocks),
+                    "old_local_path": old.get("local_path", ""),
                     "added_domains": sorted(set(snapshot.domains) - set(old.get("domains", []))),
                     "removed_domains": sorted(set(old.get("domains", [])) - set(snapshot.domains)),
                     "added_dates": sorted(set(snapshot.dates) - set(old.get("dates", []))),
@@ -670,8 +778,9 @@ def compare_snapshots(previous: dict, current: RunResult, skip_removed_detection
             changes.append({"type": "fetch_failed", "url": failure["url"], "snapshot": old_snapshot, "error": failure["error"]})
 
     for change in changes:
-        severity = severity_for(change["snapshot"], change["type"], change)
+        severity, reason = classify_severity(change["snapshot"], change["type"], change)
         change["severity"] = severity
+        change["severity_reason"] = reason
         change["impact"] = business_impact(change["snapshot"], severity, change["type"], change)
     return changes
 
@@ -688,6 +797,7 @@ def change_label(change_type: str) -> str:
     return {
         "added": "新增資源",
         "removed": "移除資源",
+        "resurfaced": "重新確認（近期曾消失）",
         "content_changed": "內容更新",
         "links_changed": "連結清單更新",
         "fetch_failed": "抓取失敗",
@@ -705,9 +815,19 @@ def format_bytes(size: int) -> str:
 def plain_change_summary(change: dict) -> str:
     change_type = change["type"]
     if change_type == "added":
-        return "這是本次第一次被監控到的新資源。請確認它是否為新的公告、表單、名單或統計資料。"
+        base = "這是本次第一次被監控到的新資源。"
+        excerpt = first_excerpt(change["snapshot"])
+        return f"{base}內容開頭：{excerpt}" if excerpt else f"{base}請確認它是否為新的公告、表單、名單或統計資料。"
     if change_type == "removed":
-        return "這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。"
+        base = "這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。"
+        excerpt = first_excerpt(change["snapshot"])
+        return f"{base}移除前的內容開頭：{excerpt}" if excerpt else base
+    if change_type == "resurfaced":
+        removed_at = change.get("removed_at", "近期")
+        return (
+            f"此資源在 {removed_at} 前後曾短暫從可抓取清單中消失，本次重新確認存在。"
+            "研判為爬取不穩定所致（例如網站逾時），並非官方異動；系統已自動修正基準，不需要特別處理。"
+        )
     if change_type == "fetch_failed":
         return "這次無法成功讀取既有資源，因此不代表內容真的改變；需要下次重跑或人工開啟確認。"
     if change_type == "links_changed":
@@ -729,7 +849,32 @@ def plain_change_summary(change: dict) -> str:
             parts.append("網域文字有變化")
         return "、".join(parts) + "。" if parts else "內容指紋改變，但未抽取到可分類的日期、網域或連結差異。"
     return "系統偵測到變動，請依來源內容人工複核。"
-COMPACT_CHANGE_TYPES = {"added", "removed", "fetch_failed"}
+COMPACT_CHANGE_TYPES = {"added", "removed", "resurfaced", "fetch_failed"}
+
+DOCUMENT_KIND_LABELS = {"pdf": "PDF", "excel": "Excel", "document": "Word/文件", "csv": "CSV"}
+
+
+def data_location_label(snapshot: ResourceSnapshot) -> str:
+    """Plain-language answer to "where would I actually see this change?" -
+    the HTML page itself, or a file the reader has to open separately."""
+    if snapshot.kind == "html":
+        return "前端網頁 — 瀏覽器打開網址就看得到"
+    kind_label = DOCUMENT_KIND_LABELS.get(snapshot.kind, snapshot.kind)
+    return f"後端文件（{kind_label}）— 需點開檔案才看得到最新內容"
+
+
+def location_summary(change: dict, limit: int = 3) -> str:
+    """"(N locations changed: ...)" suffix for the collapsed item title, so
+    readers see how many places in a file changed without expanding it."""
+    if change.get("type") != "content_changed":
+        return ""
+    detail_changes = change.get("detail_changes", [])
+    if not detail_changes:
+        return ""
+    labels = [d.get("label", "未知位置") for d in detail_changes]
+    if len(labels) <= limit:
+        return f"（共 {len(labels)} 處異動：{'、'.join(labels)}）"
+    return f"（共 {len(labels)} 處異動，含 {'、'.join(labels[:limit])} 等）"
 
 
 def render_change(lines: list[str], idx: int, change: dict, include_details: bool = True) -> None:
@@ -748,20 +893,25 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
             f"### {idx}. [{change['severity']}] {change_label(change_type)}：{title}",
             "",
             f"- {detail}",
-            f"- 來源：{snapshot.url}",
-            "",
+            f"- 資料位置：{data_location_label(snapshot)}",
         ]
+        if change.get("severity_reason"):
+            lines.append(f"- 分類依據：符合關鍵字「{change['severity_reason']}」")
+        lines.append(f"- 來源：{snapshot.url}")
+        lines.append("")
         return
 
     lines += [
-        f"### {idx}. [{change['severity']}] {title}",
+        f"### {idx}. [{change['severity']}] {title}{location_summary(change)}",
         "",
         f"- 變動：{change_label(change_type)}",
         f"- 實際狀況：{plain_change_summary(change)}",
         f"- 來源：{snapshot.url}",
-        f"- 格式：{snapshot.kind}",
+        f"- 資料位置：{data_location_label(snapshot)}",
         f"- 可能影響：{change['impact']}",
     ]
+    if change.get("severity_reason"):
+        lines.append(f"- 分類依據：符合關鍵字「{change['severity_reason']}」")
     if change["type"] == "content_changed":
         lines.append(
             f"- 檔案大小：原本 {format_bytes(change.get('old_size', 0))}，現在 {format_bytes(change.get('new_size', 0))}，差異 {change.get('size_delta', 0):+,} bytes"
@@ -784,6 +934,18 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
                     lines.append(f"    - 新增：{item}")
                 for item in detail.get("removed", [])[:4]:
                     lines.append(f"    - 移除：{item}")
+                page_match = PAGE_LABEL_RE.match(detail.get("label", ""))
+                if page_match and snapshot.kind == "pdf":
+                    page_number = int(page_match.group(1))
+                    old_local_path = change.get("old_local_path")
+                    if old_local_path and snapshot.local_path:
+                        old_thumb = render_pdf_page_thumbnail(ROOT / old_local_path, page_number)
+                        if old_thumb:
+                            lines.append(f"![第 {page_number} 頁－修改前縮圖]({old_thumb})")
+                    if snapshot.local_path:
+                        new_thumb = render_pdf_page_thumbnail(ROOT / snapshot.local_path, page_number)
+                        if new_thumb:
+                            lines.append(f"![第 {page_number} 頁－修改後縮圖]({new_thumb})")
         else:
             lines.append("- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。")
         lines.append("- 判讀方式：若只有檔案雜湊或大小改變，可能是 PDF 重新輸出、壓縮、metadata 更新，仍建議打開來源確認版面與內容。")
@@ -887,6 +1049,12 @@ def markdown_to_basic_html(markdown: str) -> str:
                 body_lines.append("<ul>")
                 in_list = True
             body_lines.append(f"<li>{html.escape(line[2:])}</li>")
+        elif MARKDOWN_IMAGE_RE.match(line):
+            close_list()
+            alt, src = MARKDOWN_IMAGE_RE.match(line).groups()
+            # src is a data: URI we generated ourselves (base64 alphabet only),
+            # safe to place unescaped; alt text still goes through html.escape.
+            body_lines.append(f'<img class="page-thumb" alt="{html.escape(alt)}" title="{html.escape(alt)}" src="{src}" loading="lazy">')
         else:
             close_list()
             body_lines.append(f"<p>{html.escape(line)}</p>")
@@ -911,6 +1079,7 @@ details.section summary{cursor:pointer;list-style:none}
 details.section summary h2{display:inline}
 details.section summary::before{content:"▶ ";font-size:14px;color:#6b7280}
 details.section[open] summary::before{content:"▼ "}
+img.page-thumb{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid #d1d5db;border-radius:6px}
 </style>
 </head>
 <body>
@@ -946,20 +1115,26 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
             for t, n in sorted(type_counts.items(), key=lambda item: -item[1])
         )
         lines += ["## 變動類型分布", "", f"- {type_summary}", ""]
+
+    notices: list[str] = []
     if run.max_resources_hit:
-        lines += [
-            "## 注意",
-            "",
-            "本次達到 `PAGCOR_MAX_PAGES` 上限。系統不會在這種情況下判定舊資源已被移除，以避免誤報。若要完整全站移除偵測，請提高上限後重跑。",
-            "",
-        ]
+        notices.append("本次達到 `PAGCOR_MAX_PAGES` 上限。系統不會在這種情況下判定舊資源已被移除，以避免誤報。若要完整全站移除偵測，請提高上限後重跑。")
     if shortfall:
-        lines += [
-            "## 注意",
-            "",
-            f"本次抓到的資源數（{len(run.resources)}）明顯低於上次基準（{prev_resource_count}），疑似爬取不完整（可能是網站逾時或連線問題），而不是真的有資源被移除。系統這次不會判定短少的資源為「已移除」，也不會更新比對基準，等下次抓齊後才會正式比對。",
-            "",
-        ]
+        notices.append(
+            f"本次抓到的資源數（{len(run.resources)}）明顯低於上次基準（{prev_resource_count}），疑似爬取不完整（可能是網站逾時或連線問題），而不是真的有資源被移除。系統這次不會判定短少的資源為「已移除」，也不會更新比對基準，等下次抓齊後才會正式比對。"
+        )
+    anomaly_types = [
+        (t, n) for t, n in type_counts.items()
+        if t != "resurfaced" and n >= 20 and len(run.resources) > 0 and n / len(run.resources) >= 0.05
+    ]
+    if anomaly_types:
+        parts = "、".join(f"{change_label(t)}（{n} 筆）" for t, n in sorted(anomaly_types, key=lambda item: -item[1]))
+        notices.append(f"本次{parts}的數量明顯偏高，建議先確認是否為爬取異常造成的一次性現象，而非真實大量異動，再逐筆檢視。")
+    if notices:
+        lines += ["## 注意", ""]
+        for notice in notices:
+            lines.append(f"- {notice}")
+        lines.append("")
 
     urgent = [c for c in ordered if c["severity"] in {"Critical", "High"}]
     if urgent:
@@ -1029,10 +1204,15 @@ def main() -> None:
     previous = load_state()
     run = discover_and_snapshot()
     shortfall = (not run.max_resources_hit) and crawl_incomplete(previous, run)
-    changes = compare_snapshots(previous, run, skip_removed_detection=run.max_resources_hit or shortfall)
+    changes = compare_snapshots(
+        previous,
+        run,
+        skip_removed_detection=run.max_resources_hit or shortfall,
+        recent_removals=previous.get("recent_removals", {}),
+    )
     report = render_reports(changes, run, shortfall=shortfall, prev_resource_count=len(previous.get("resources", {})))
     if not run.max_resources_hit and not shortfall:
-        save_state(run)
+        save_state(run, build_recent_removals(previous, changes, run.checked_at))
     elif run.max_resources_hit:
         print("State not updated because crawl did not finish all queued resources.")
     else:
