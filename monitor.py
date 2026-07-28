@@ -8,10 +8,11 @@ import logging
 import os
 import re
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urldefrag
+from urllib.parse import unquote, urljoin, urlparse, urldefrag
 
 import requests
 from bs4 import BeautifulSoup
@@ -166,7 +167,9 @@ def extract_html_blocks(html: bytes) -> list[dict]:
     soup = clean_soup(html)
     main = soup.find("main") or soup.body or soup
     blocks: list[dict] = []
-    current_title = "頁面開頭"
+    section_title = "頁面開頭"
+    current_title = section_title
+    continuation = 0
     current_parts: list[str] = []
 
     def flush() -> None:
@@ -182,12 +185,15 @@ def extract_html_blocks(html: bytes) -> list[dict]:
             continue
         if element.name in {"h1", "h2", "h3", "h4"}:
             flush()
-            current_title = text[:120]
+            section_title = text[:120]
+            current_title = section_title
+            continuation = 0
         else:
             current_parts.append(text)
             if len(" ".join(current_parts)) > 2500:
                 flush()
-                current_title = f"{current_title}（續）"
+                continuation += 1
+                current_title = f"{section_title}（續 {continuation}）"
     flush()
     if not blocks:
         whole = extract_html_text(html)
@@ -251,7 +257,7 @@ def extract_pdf_pages(path: Path) -> list[dict]:
         if len(ocr_text) > len(text):
             text = ocr_text
             source = "OCR"
-        block = make_text_block(f"? {idx} ?", text)
+        block = make_text_block(f"第 {idx} 頁", text)
         block["source"] = source
         pages.append(block)
     return pages
@@ -516,6 +522,22 @@ def business_impact(snapshot: ResourceSnapshot, severity: str, change_type: str,
 
 
 
+def readable_title(snapshot: ResourceSnapshot) -> str:
+    """Turn a raw filename/URL slug into something a human can scan.
+
+    Report titles were raw filenames (e.g. "Memorandum-on-Amendments-to-...pdf"),
+    which forced readers to parse hyphens and extensions themselves. This is
+    display-only — it never touches snapshot.title, so it can't affect hashing,
+    diffing, or the stored baseline.
+    """
+    raw = snapshot.title or Path(urlparse(snapshot.url).path).name or snapshot.url
+    name = unquote(raw)
+    stem = Path(name).stem if snapshot.kind != "html" else name
+    stem = stem.replace("_", " ").replace("-", " ")
+    stem = re.sub(r"\s+", " ", stem).strip()
+    return stem or raw
+
+
 def short_text(text: str, limit: int = 260) -> str:
     text = normalize_text(text)
     if len(text) <= limit:
@@ -575,7 +597,20 @@ def summarize_text_block_changes(old_blocks: list[dict], new_blocks: list[dict],
             return details
     return details
 
-def compare_snapshots(previous: dict, current: RunResult) -> list[dict]:
+def crawl_incomplete(previous: dict, current: RunResult, threshold: float = 0.85, min_baseline: int = 20) -> bool:
+    """True when this run fetched far fewer resources than the last baseline.
+
+    A steep drop almost always means the crawl was cut short by network
+    failures (e.g. PAGCOR site timeouts), not that resources were actually
+    removed. min_baseline avoids tripping this on the very first small runs.
+    """
+    prev_count = len(previous.get("resources", {}))
+    if prev_count < min_baseline:
+        return False
+    return len(current.resources) < threshold * prev_count
+
+
+def compare_snapshots(previous: dict, current: RunResult, skip_removed_detection: bool = False) -> list[dict]:
     prev_resources = previous.get("resources", {})
     changes: list[dict] = []
 
@@ -623,7 +658,7 @@ def compare_snapshots(previous: dict, current: RunResult) -> list[dict]:
                 }
             )
 
-    if not current.max_resources_hit:
+    if not skip_removed_detection:
         for url, old in prev_resources.items():
             if url not in current.resources:
                 old_snapshot = snapshot_from_dict(old)
@@ -694,12 +729,34 @@ def plain_change_summary(change: dict) -> str:
             parts.append("網域文字有變化")
         return "、".join(parts) + "。" if parts else "內容指紋改變，但未抽取到可分類的日期、網域或連結差異。"
     return "系統偵測到變動，請依來源內容人工複核。"
+COMPACT_CHANGE_TYPES = {"added", "removed", "fetch_failed"}
+
+
 def render_change(lines: list[str], idx: int, change: dict, include_details: bool = True) -> None:
     snapshot = change["snapshot"]
+    title = readable_title(snapshot)
+    change_type = change["type"]
+
+    if change_type in COMPACT_CHANGE_TYPES:
+        # These types have no content diff to show (the resource simply
+        # appeared, vanished, or couldn't be fetched), so a full 5-line
+        # block per item is pure repetition. One or two lines is enough.
+        detail = plain_change_summary(change)
+        if change_type == "fetch_failed":
+            detail = f"{detail}（錯誤：{change.get('error', '')}）"
+        lines += [
+            f"### {idx}. [{change['severity']}] {change_label(change_type)}：{title}",
+            "",
+            f"- {detail}",
+            f"- 來源：{snapshot.url}",
+            "",
+        ]
+        return
+
     lines += [
-        f"### {idx}. [{change['severity']}] {snapshot.title}",
+        f"### {idx}. [{change['severity']}] {title}",
         "",
-        f"- 變動：{change_label(change['type'])}",
+        f"- 變動：{change_label(change_type)}",
         f"- 實際狀況：{plain_change_summary(change)}",
         f"- 來源：{snapshot.url}",
         f"- 格式：{snapshot.kind}",
@@ -735,9 +792,7 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
         removed = [item["text"] or item["url"] for item in change.get("removed_links", [])]
         lines.append(f"- 新增連結：{format_list(added)}")
         lines.append(f"- 移除連結：{format_list(removed)}")
-    if change["type"] == "fetch_failed":
-        lines.append(f"- 錯誤：{change.get('error', '')}")
-    lines += ["", "建議：Critical / High 請優先人工複核來源文件；Medium 排入例行檢視；Low 保留追溯。", ""]
+    lines.append("")
 
 
 
@@ -792,7 +847,7 @@ ul{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px 20px 
 </head>
 <body>
 """ + "\n".join(body_lines) + "\n</body>\n</html>\n"
-def render_reports(changes: list[dict], run: RunResult) -> Path:
+def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False, prev_resource_count: int = 0) -> Path:
     now = datetime.now()
     counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
     for change in changes:
@@ -816,6 +871,13 @@ def render_reports(changes: list[dict], run: RunResult) -> Path:
         f"- Low: {counts['Low']}",
         "",
     ]
+    type_counts = Counter(c["type"] for c in changes)
+    if type_counts:
+        type_summary = "、".join(
+            f"{change_label(t)} {n}"
+            for t, n in sorted(type_counts.items(), key=lambda item: -item[1])
+        )
+        lines += ["## 變動類型分布", "", f"- {type_summary}", ""]
     if run.max_resources_hit:
         lines += [
             "## 注意",
@@ -823,21 +885,28 @@ def render_reports(changes: list[dict], run: RunResult) -> Path:
             "本次達到 `PAGCOR_MAX_PAGES` 上限。系統不會在這種情況下判定舊資源已被移除，以避免誤報。若要完整全站移除偵測，請提高上限後重跑。",
             "",
         ]
+    if shortfall:
+        lines += [
+            "## 注意",
+            "",
+            f"本次抓到的資源數（{len(run.resources)}）明顯低於上次基準（{prev_resource_count}），疑似爬取不完整（可能是網站逾時或連線問題），而不是真的有資源被移除。系統這次不會判定短少的資源為「已移除」，也不會更新比對基準，等下次抓齊後才會正式比對。",
+            "",
+        ]
 
     urgent = [c for c in ordered if c["severity"] in {"Critical", "High"}]
     if urgent:
-        lines += ["## 需要優先閱讀", ""]
+        lines += ["## 需要優先閱讀", "", "建議：以下項目請優先人工複核來源文件。", ""]
         for idx, change in enumerate(urgent, 1):
             render_change(lines, idx, change)
 
     medium = [c for c in ordered if c["severity"] == "Medium"]
     low = [c for c in ordered if c["severity"] == "Low"]
     if medium:
-        lines += ["## 例行檢視", ""]
+        lines += ["## 例行檢視", "", "建議：非急迫，排入例行檢視即可。", ""]
         for idx, change in enumerate(medium, 1):
             render_change(lines, idx, change)
     if low:
-        lines += ["## 低風險留痕", ""]
+        lines += ["## 低風險留痕", "", "以下為低風險變動，僅留存追溯紀錄，不需要立即處理。", ""]
         for idx, change in enumerate(low, 1):
             render_change(lines, idx, change, include_details=False)
     if not ordered:
@@ -867,13 +936,16 @@ def render_reports(changes: list[dict], run: RunResult) -> Path:
         f"變動總數：{len(changes)}",
         f"Critical: {counts['Critical']} | High: {counts['High']} | Medium: {counts['Medium']} | Low: {counts['Low']}",
         f"監控資源數：{len(run.resources)} | 抓取失敗：{len(run.failures)}",
-        "",
     ]
+    if type_counts:
+        summary_lines.append(f"變動類型：{type_summary}")
+    summary_lines.append("")
     if urgent:
         summary_lines.append("優先閱讀：")
         for idx, change in enumerate(urgent[:8], 1):
-            summary_lines.append(f"{idx}. [{change['severity']}] {change_label(change['type'])} - {change['snapshot'].title}")
-            summary_lines.append(f"   影響：{change['impact']}")
+            summary_lines.append(f"{idx}. [{change['severity']}] {change_label(change['type'])} - {readable_title(change['snapshot'])}")
+            if change["type"] not in COMPACT_CHANGE_TYPES:
+                summary_lines.append(f"   影響：{change['impact']}")
         if len(urgent) > 8:
             summary_lines.append(f"另有 {len(urgent) - 8} 個 Critical/High 變動，請看完整報告。")
     else:
@@ -888,16 +960,20 @@ def render_reports(changes: list[dict], run: RunResult) -> Path:
 def main() -> None:
     previous = load_state()
     run = discover_and_snapshot()
-    changes = compare_snapshots(previous, run)
-    report = render_reports(changes, run)
-    if not run.max_resources_hit:
+    shortfall = (not run.max_resources_hit) and crawl_incomplete(previous, run)
+    changes = compare_snapshots(previous, run, skip_removed_detection=run.max_resources_hit or shortfall)
+    report = render_reports(changes, run, shortfall=shortfall, prev_resource_count=len(previous.get("resources", {})))
+    if not run.max_resources_hit and not shortfall:
         save_state(run)
-    else:
+    elif run.max_resources_hit:
         print("State not updated because crawl did not finish all queued resources.")
+    else:
+        print(f"State not updated: only {len(run.resources)} of {len(previous.get('resources', {}))} previous resources were fetched (crawl looks incomplete).")
     print(f"Report: {report}")
     print(f"Resources: {len(run.resources)}")
     print(f"Failures: {len(run.failures)}")
     print(f"Max resources hit: {run.max_resources_hit}")
+    print(f"Crawl shortfall: {shortfall}")
     print(f"Changes: {len(changes)}")
 
 
