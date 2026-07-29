@@ -415,6 +415,60 @@ def save_state(result: RunResult, recent_removals: dict | None = None) -> None:
     STATE_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def crawl_queue(
+    session: requests.Session,
+    queue: list[str],
+    queued: set[str],
+    seen: set[str],
+    resources: dict[str, ResourceSnapshot],
+    failures: list[dict],
+    checked_at: str,
+    timeout_seconds: float,
+    delay: float,
+    max_resources: int,
+    fetch_attempts: int,
+) -> list[str]:
+    """Process a URL queue breadth-first, retrying each fetch up to
+    fetch_attempts times. Mutates resources/failures/seen/queued in place
+    (shared state across calls, so a follow-up sweep can reuse it). Returns
+    the remaining queue - non-empty only if max_resources was hit."""
+    while queue and len(seen) < max_resources:
+        url = queue.pop(0)
+        if url in seen or not is_monitorable(url):
+            continue
+        seen.add(url)
+        snapshot = None
+        last_error: Exception | None = None
+        for attempt in range(1, fetch_attempts + 1):
+            try:
+                snapshot = snapshot_resource(session, url, checked_at, timeout_seconds)
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt < fetch_attempts:
+                    print(f"Retry {attempt}/{fetch_attempts - 1}: {url} ({exc})")
+                    time.sleep(delay * 2)
+        if snapshot is None:
+            failures[:] = [failure for failure in failures if failure.get("url") != url]
+            failures.append({"url": url, "error": str(last_error), "checked_at": checked_at})
+            print(f"Failed: {url} ({last_error})")
+            save_checkpoint(resources, failures, queue, queued, seen, checked_at, max_resources)
+            time.sleep(delay)
+            continue
+
+        resources[url] = snapshot
+        failures[:] = [failure for failure in failures if failure.get("url") != url]
+        if snapshot.kind == "html":
+            for link in snapshot.links:
+                linked_url = link["url"]
+                if linked_url not in seen and linked_url not in queued:
+                    queue.append(linked_url)
+                    queued.add(linked_url)
+        save_checkpoint(resources, failures, queue, queued, seen, checked_at, max_resources)
+        time.sleep(delay)
+    return queue
+
+
 def discover_and_snapshot() -> RunResult:
     if load_dotenv:
         load_dotenv(ROOT / ".env")
@@ -422,6 +476,7 @@ def discover_and_snapshot() -> RunResult:
     max_resources = int(os.getenv("PAGCOR_MAX_PAGES", "300"))
     delay = float(os.getenv("PAGCOR_REQUEST_DELAY_SECONDS", "0.5"))
     timeout_seconds = float(os.getenv("PAGCOR_REQUEST_TIMEOUT_SECONDS", "45"))
+    fetch_attempts = max(1, int(os.getenv("PAGCOR_FETCH_ATTEMPTS", "3")))
     checked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     DATA_DIR.mkdir(exist_ok=True)
@@ -450,30 +505,23 @@ def discover_and_snapshot() -> RunResult:
         resources: dict[str, ResourceSnapshot] = {}
         failures: list[dict] = []
 
-    while queue and len(seen) < max_resources:
-        url = queue.pop(0)
-        if url in seen or not is_monitorable(url):
-            continue
-        seen.add(url)
-        try:
-            snapshot = snapshot_resource(session, url, checked_at, timeout_seconds)
-        except Exception as exc:
-            failures.append({"url": url, "error": str(exc), "checked_at": checked_at})
-            print(f"Failed: {url} ({exc})")
-            save_checkpoint(resources, failures, queue, queued, seen, checked_at, max_resources)
-            time.sleep(delay)
-            continue
+    queue = crawl_queue(session, queue, queued, seen, resources, failures, checked_at, timeout_seconds, delay, max_resources, fetch_attempts)
 
-        resources[url] = snapshot
-        failures = [failure for failure in failures if failure.get("url") != url]
-        if snapshot.kind == "html":
-            for link in snapshot.links:
-                linked_url = link["url"]
-                if linked_url not in seen and linked_url not in queued:
-                    queue.append(linked_url)
-                    queued.add(linked_url)
-        save_checkpoint(resources, failures, queue, queued, seen, checked_at, max_resources)
-        time.sleep(delay)
+    # Per-URL retries (above) absorb single flaky requests; this handles the
+    # case where a batch of URLs failed together (e.g. PAGCOR had a rough
+    # minute). Only worth it if the main pass actually finished (queue empty -
+    # if we hit max_resources instead, there's a bigger, different problem).
+    sweep_rounds = max(0, int(os.getenv("PAGCOR_FINAL_SWEEP_ROUNDS", "1")))
+    sweep_wait_seconds = float(os.getenv("PAGCOR_FINAL_SWEEP_WAIT_SECONDS", "30"))
+    for sweep_num in range(1, sweep_rounds + 1):
+        if not failures or queue:
+            break
+        retry_urls = [failure["url"] for failure in failures]
+        print(f"Final sweep {sweep_num}/{sweep_rounds}: retrying {len(retry_urls)} still-failed resource(s) after {sweep_wait_seconds:.0f}s")
+        time.sleep(sweep_wait_seconds)
+        for url in retry_urls:
+            seen.discard(url)
+        queue = crawl_queue(session, retry_urls, queued, seen, resources, failures, checked_at, timeout_seconds, delay, max_resources, fetch_attempts)
 
     result = RunResult(resources=resources, failures=failures, max_resources_hit=bool(queue), checked_at=checked_at)
     if not result.max_resources_hit:
@@ -502,44 +550,59 @@ def classify_severity(snapshot: ResourceSnapshot, change_type: str, change: dict
         # Force it to Low regardless of what keywords the title matches, so it
         # never competes for attention with genuine new content.
         return "Low", None
+    if change_type == "content_changed" and change and change.get("cosmetic_only"):
+        # File got a new hash but the extractable text is identical - a
+        # re-export/re-save, not a real addition or removal. Force Low so it
+        # never outranks a genuine content change in the priority section.
+        return "Low", None
 
     text = evidence_text(snapshot, change)
+    # (matched-text pattern, plain-language reason shown to readers). Matching
+    # stays on the English text actually used on PAGCOR's site; only the
+    # displayed reason is translated, so non-engineers aren't shown raw
+    # code-search strings like "domain-names" in the report.
     critical_patterns = [
-        "cancelled",
-        "reported websites",
-        "counterfeit",
-        "registered brands",
-        "domain names",
-        "domain-names",
-        "licensees",
-        "accredited",
-        "gaming system administrator",
-        "regulatory framework",
-        "amendment",
+        ("cancelled", "業者資格被取消"),
+        ("reported websites", "被回報的違規網站"),
+        ("counterfeit", "偽造證書"),
+        ("registered brands", "已登記品牌"),
+        ("domain names", "網域名稱"),
+        ("domain-names", "網域名稱"),
+        ("licensees", "持牌業者"),
+        ("accredited", "認可資格"),
+        ("gaming system administrator", "遊戲系統管理者"),
+        ("regulatory framework", "監理規範"),
+        ("amendment", "修訂或修正案"),
     ]
     high_patterns = [
-        "announcement",
-        "notice",
-        "application kit",
-        "requirements",
-        "schedule of fees",
-        "industry statistic",
-        "industry data",
-        "player exclusion",
+        ("announcement", "公告"),
+        ("notice", "通知"),
+        ("application kit", "申請文件套組"),
+        ("requirements", "申請條件"),
+        ("schedule of fees", "費率表"),
+        ("industry statistic", "產業統計數據"),
+        ("industry data", "產業數據"),
+        ("player exclusion", "玩家排除名單"),
     ]
-    medium_patterns = ["manual", "guideline", "form", "technical standard", "standard"]
+    medium_patterns = [
+        ("manual", "操作手冊"),
+        ("guideline", "指引"),
+        ("form", "申請表單"),
+        ("technical standard", "技術標準"),
+        ("standard", "標準"),
+    ]
 
     if change and (change.get("added_domains") or change.get("removed_domains")):
         return "Critical", "網域清單變動"
-    for pattern in critical_patterns:
+    for pattern, reason in critical_patterns:
         if pattern in text:
-            return "Critical", pattern
-    for pattern in high_patterns:
+            return "Critical", reason
+    for pattern, reason in high_patterns:
         if pattern in text:
-            return "High", pattern
-    for pattern in medium_patterns:
+            return "High", reason
+    for pattern, reason in medium_patterns:
         if pattern in text:
-            return "Medium", pattern
+            return "Medium", reason
     if snapshot.kind in {"pdf", "excel", "document", "csv"} and change_type in {"added", "content_changed"}:
         return "Medium", None
     return "Low", None
@@ -727,10 +790,14 @@ def compare_snapshots(
                 changes.append({"type": "added", "url": url, "snapshot": snapshot})
             continue
 
-        if snapshot.kind == "html":
-            content_changed = old.get("text_sha256") != snapshot.text_sha256
-        else:
-            content_changed = old.get("sha256") != snapshot.sha256 or old.get("text_sha256") != snapshot.text_sha256
+        binary_changed = old.get("sha256") != snapshot.sha256
+        text_changed = old.get("text_sha256") != snapshot.text_sha256
+        content_changed = text_changed if snapshot.kind == "html" else (binary_changed or text_changed)
+        # A file can get a new hash (re-exported, re-compressed, a server-side
+        # touch) while its actual extractable text is byte-identical. That is
+        # not a real content change - it's noise the reader explicitly said
+        # they don't want competing for attention with real additions/removals.
+        cosmetic_only = content_changed and snapshot.kind != "html" and binary_changed and not text_changed
 
         if content_changed:
             old_size = int(old.get("size") or 0)
@@ -742,8 +809,9 @@ def compare_snapshots(
                     "old_size": old_size,
                     "new_size": snapshot.size,
                     "size_delta": snapshot.size - old_size,
-                    "binary_changed": old.get("sha256") != snapshot.sha256,
-                    "text_changed": old.get("text_sha256") != snapshot.text_sha256,
+                    "binary_changed": binary_changed,
+                    "text_changed": text_changed,
+                    "cosmetic_only": cosmetic_only,
                     "detail_changes": summarize_text_block_changes(old.get("text_blocks", []), snapshot.text_blocks),
                     "old_local_path": old.get("local_path", ""),
                     "added_domains": sorted(set(snapshot.domains) - set(old.get("domains", []))),
@@ -756,15 +824,20 @@ def compare_snapshots(
         if snapshot.kind == "html" and old.get("links") != snapshot.links:
             old_links = {item["url"]: item for item in old.get("links", [])}
             new_links = {item["url"]: item for item in snapshot.links}
-            changes.append(
-                {
-                    "type": "links_changed",
-                    "url": url,
-                    "snapshot": snapshot,
-                    "added_links": [new_links[u] for u in sorted(set(new_links) - set(old_links))],
-                    "removed_links": [old_links[u] for u in sorted(set(old_links) - set(new_links))],
-                }
-            )
+            added_links = [new_links[u] for u in sorted(set(new_links) - set(old_links))]
+            removed_links = [old_links[u] for u in sorted(set(old_links) - set(new_links))]
+            # If the link set (by URL) is unchanged, the only difference was
+            # link text/ordering - nothing the reader asked to be told about.
+            if added_links or removed_links:
+                changes.append(
+                    {
+                        "type": "links_changed",
+                        "url": url,
+                        "snapshot": snapshot,
+                        "added_links": added_links,
+                        "removed_links": removed_links,
+                    }
+                )
 
     if not skip_removed_detection:
         for url, old in prev_resources.items():
@@ -835,11 +908,13 @@ def plain_change_summary(change: dict) -> str:
         removed = len(change.get("removed_links", []))
         return f"來源頁面的連結清單改變：新增 {added} 個連結、移除 {removed} 個連結。"
     if change_type == "content_changed":
+        if change.get("cosmetic_only"):
+            return "此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。"
         parts = []
         if change.get("binary_changed"):
-            parts.append("檔案內容雜湊不同")
+            parts.append("檔案本身有更新")
         if change.get("text_changed"):
-            parts.append("可抽取文字不同")
+            parts.append("文字內容有變化")
         if change.get("size_delta"):
             direction = "增加" if change["size_delta"] > 0 else "減少"
             parts.append(f"大小{direction} {format_bytes(abs(change['size_delta']))}")
@@ -847,7 +922,7 @@ def plain_change_summary(change: dict) -> str:
             parts.append("日期文字有變化")
         if change.get("added_domains") or change.get("removed_domains"):
             parts.append("網域文字有變化")
-        return "、".join(parts) + "。" if parts else "內容指紋改變，但未抽取到可分類的日期、網域或連結差異。"
+        return "、".join(parts) + "。" if parts else "系統偵測到內容有變化，但沒有抓到可以分類說明的日期、網域或連結差異，建議直接打開來源確認。"
     return "系統偵測到變動，請依來源內容人工複核。"
 COMPACT_CHANGE_TYPES = {"added", "removed", "resurfaced", "fetch_failed"}
 
@@ -882,21 +957,24 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
     title = readable_title(snapshot)
     change_type = change["type"]
 
-    if change_type in COMPACT_CHANGE_TYPES:
-        # These types have no content diff to show (the resource simply
-        # appeared, vanished, or couldn't be fetched), so a full 5-line
+    is_cosmetic = change_type == "content_changed" and change.get("cosmetic_only")
+    if change_type in COMPACT_CHANGE_TYPES or is_cosmetic:
+        # These types have no content diff worth showing (the resource simply
+        # appeared, vanished, couldn't be fetched, or - for is_cosmetic - only
+        # got a new file hash with no real text change), so a full 5-line
         # block per item is pure repetition. One or two lines is enough.
         detail = plain_change_summary(change)
         if change_type == "fetch_failed":
             detail = f"{detail}（錯誤：{change.get('error', '')}）"
+        label = "技術性更新（內容未變）" if is_cosmetic else change_label(change_type)
         lines += [
-            f"### {idx}. [{change['severity']}] {change_label(change_type)}：{title}",
+            f"### {idx}. [{change['severity']}] {label}：{title}",
             "",
             f"- {detail}",
             f"- 資料位置：{data_location_label(snapshot)}",
         ]
         if change.get("severity_reason"):
-            lines.append(f"- 分類依據：符合關鍵字「{change['severity_reason']}」")
+            lines.append(f"- 分類依據：內容涉及「{change['severity_reason']}」")
         lines.append(f"- 來源：{snapshot.url}")
         lines.append("")
         return
@@ -911,20 +989,20 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
         f"- 可能影響：{change['impact']}",
     ]
     if change.get("severity_reason"):
-        lines.append(f"- 分類依據：符合關鍵字「{change['severity_reason']}」")
+        lines.append(f"- 分類依據：內容涉及「{change['severity_reason']}」")
     if change["type"] == "content_changed":
         lines.append(
             f"- 檔案大小：原本 {format_bytes(change.get('old_size', 0))}，現在 {format_bytes(change.get('new_size', 0))}，差異 {change.get('size_delta', 0):+,} bytes"
         )
-        lines.append(f"- 內容指紋：{'檔案內容有變' if change.get('binary_changed') else '檔案內容未變'}；{'可抽取文字有變' if change.get('text_changed') else '可抽取文字未變'}")
+        lines.append(f"- 檔案狀態：{'檔案本身有更新' if change.get('binary_changed') else '檔案本身沒有變化'}；{'文字內容有變化' if change.get('text_changed') else '文字內容沒有變化'}")
         if change.get("added_dates") or change.get("removed_dates"):
             lines.append(f"- 日期變動：新增 {format_list(change.get('added_dates', []))}；移除 {format_list(change.get('removed_dates', []))}")
         else:
             lines.append("- 日期變動：未偵測到新增或移除的日期文字")
         if change.get("added_domains") or change.get("removed_domains"):
-            lines.append(f"- Domain 變動：新增 {format_list(change.get('added_domains', []))}；移除 {format_list(change.get('removed_domains', []))}")
+            lines.append(f"- 網域變動：新增 {format_list(change.get('added_domains', []))}；移除 {format_list(change.get('removed_domains', []))}")
         else:
-            lines.append("- Domain 變動：未偵測到新增或移除的網域文字")
+            lines.append("- 網域變動：未偵測到新增或移除的網域文字")
         detail_changes = change.get("detail_changes", [])
         if detail_changes:
             lines.append("- 變動位置與文字片段：")
@@ -948,7 +1026,7 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
                             lines.append(f"![第 {page_number} 頁－修改後縮圖]({new_thumb})")
         else:
             lines.append("- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。")
-        lines.append("- 判讀方式：若只有檔案雜湊或大小改變，可能是 PDF 重新輸出、壓縮、metadata 更新，仍建議打開來源確認版面與內容。")
+        lines.append("- 判讀方式：如果只有檔案大小改變、但文字內容沒變，很可能只是官方重新輸出或壓縮同一份文件，不一定代表內容有實質修改；仍建議打開來源確認版面與內容。")
     if change["type"] == "links_changed" and include_details:
         added = [item["text"] or item["url"] for item in change.get("added_links", [])]
         removed = [item["text"] or item["url"] for item in change.get("removed_links", [])]
@@ -1118,7 +1196,7 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
 
     notices: list[str] = []
     if run.max_resources_hit:
-        notices.append("本次達到 `PAGCOR_MAX_PAGES` 上限。系統不會在這種情況下判定舊資源已被移除，以避免誤報。若要完整全站移除偵測，請提高上限後重跑。")
+        notices.append("本次監控的資源數量達到系統設定的上限，可能還有頁面沒抓完。系統不會在這種情況下判定舊資源已被移除，以避免誤報。若要完整檢查全站是否有資源被移除，請提高監控上限後重新執行。")
     if shortfall:
         notices.append(
             f"本次抓到的資源數（{len(run.resources)}）明顯低於上次基準（{prev_resource_count}），疑似爬取不完整（可能是網站逾時或連線問題），而不是真的有資源被移除。系統這次不會判定短少的資源為「已移除」，也不會更新比對基準，等下次抓齊後才會正式比對。"
