@@ -1273,7 +1273,15 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
         summary_lines.append("未偵測到 Critical / High 變動。")
     summary_lines.append("")
     pages_url = os.getenv("GITHUB_PAGES_URL", "").strip()
-    summary_lines.append(f"完整報告：{pages_url}" if pages_url else "完整報告：reports/latest.html")
+    if pages_url:
+        # Link to this run's own archived snapshot, not the "latest" page -
+        # the latest page gets overwritten every run, so a Telegram message
+        # sent today would otherwise show a different (newer) report by the
+        # time someone opens it after the next run.
+        archive_url = f"{pages_url.rstrip('/')}/reports/{now.strftime('%Y-%m-%d_%H-%M-%S')}.html"
+        summary_lines.append(f"本次報告：{archive_url}")
+    else:
+        summary_lines.append(f"本次報告：reports/{now.strftime('%Y-%m-%d_%H-%M-%S')}.html")
     (REPORT_DIR / "telegram_summary.txt").write_text("\n".join(summary_lines), encoding="utf-8")
     return report_path
 

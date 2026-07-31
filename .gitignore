@@ -6,7 +6,7 @@ reports/*.md
 reports/*.txt
 reports/20*.html
 
-reports/
+/reports/
 
 logs/
 run.lock
