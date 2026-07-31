@@ -48,6 +48,8 @@ DOWNLOAD_DIR = DATA_DIR / "downloads"
 REPORT_DIR = ROOT / "reports"
 PAGES_DIR = ROOT / "docs"
 PAGES_ARCHIVE_DIR = PAGES_DIR / "reports"
+HISTORY_JSON_PATH = PAGES_DIR / "history.json"
+HISTORY_HTML_PATH = PAGES_DIR / "history.html"
 STATE_PATH = DATA_DIR / "state.json"
 CHECKPOINT_PATH = DATA_DIR / "checkpoint.json"
 
@@ -1036,6 +1038,83 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
 
 
 
+def load_history() -> list[dict]:
+    if not HISTORY_JSON_PATH.exists():
+        return []
+    try:
+        return json.loads(HISTORY_JSON_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def append_history_entry(now: datetime, run: RunResult, changes: list[dict], counts: dict) -> list[dict]:
+    """Record this run in the public history log (docs/history.json), so the
+    history page can list every past report, newest first, each linking to
+    its own permanent archived snapshot."""
+    history = load_history()
+    entry = {
+        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "file": f"reports/{now.strftime('%Y-%m-%d_%H-%M-%S')}.html",
+        "resources": len(run.resources),
+        "changes": len(changes),
+        "critical": counts.get("Critical", 0),
+        "high": counts.get("High", 0),
+        "medium": counts.get("Medium", 0),
+        "low": counts.get("Low", 0),
+    }
+    history = [e for e in history if e.get("timestamp") != entry["timestamp"]]
+    history.append(entry)
+    history.sort(key=lambda e: e["timestamp"])
+    HISTORY_JSON_PATH.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
+    return history
+
+
+def render_history_html(history: list[dict]) -> str:
+    rows = []
+    for entry in sorted(history, key=lambda e: e["timestamp"], reverse=True):
+        badge_parts = []
+        for key, label in (("critical", "Critical"), ("high", "High"), ("medium", "Medium"), ("low", "Low")):
+            if entry.get(key):
+                badge_parts.append(f"{label} {entry[key]}")
+        badges = "、".join(badge_parts) if badge_parts else "無變動"
+        rows.append(
+            f'<tr><td><a href="{html.escape(entry.get("file", ""))}">{html.escape(entry.get("timestamp", ""))}</a></td>'
+            f'<td>{entry.get("resources", "-")}</td>'
+            f'<td>{entry.get("changes", 0)}</td>'
+            f'<td>{html.escape(badges)}</td></tr>'
+        )
+    table_rows = "\n".join(rows) if rows else '<tr><td colspan="4">尚無歷史紀錄</td></tr>'
+    return """<!doctype html>
+<html lang=\"zh-Hant\">
+<head>
+<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<title>PAGCOR Regulatory Monitor - 歷史紀錄</title>
+<style>
+body{font-family:Arial,'Microsoft JhengHei',sans-serif;line-height:1.6;margin:32px;max-width:900px;color:#1f2937;background:#f8fafc}
+h1{font-size:26px;color:#111827}
+a{color:#1d4ed8;text-decoration:none}a:hover{text-decoration:underline}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:14px}
+th{background:#f1f5f9;font-weight:600}
+tr:hover td{background:#f8fafc}
+.back{display:inline-block;margin-bottom:16px}
+</style>
+</head>
+<body>
+<h1>PAGCOR Regulatory Monitor - 歷史紀錄</h1>
+<p class=\"back\"><a href=\"index.html\">&larr; 回到最新報告</a></p>
+<table>
+<thead><tr><th>檢查時間</th><th>監控資源數</th><th>變動總數</th><th>分級摘要</th></tr></thead>
+<tbody>
+""" + table_rows + """
+</tbody>
+</table>
+</body>
+</html>
+"""
+
+
 COLLAPSIBLE_REPORT_SECTIONS = {"例行檢視", "低風險留痕"}
 
 
@@ -1103,12 +1182,14 @@ def markdown_to_basic_html(markdown: str) -> str:
         if line.startswith("# "):
             close_section()
             body_lines.append(f"<h1>{html.escape(line[2:])}</h1>")
-            if nav_sections:
-                links = " · ".join(
-                    f'<a href="#{sec_id}">{html.escape(heading)}{f" ({count})" if count else ""}</a>'
-                    for sec_id, heading, count in nav_sections
-                )
-                body_lines.append(f'<nav class="quicknav">{links}</nav>')
+            pages_url = os.getenv("GITHUB_PAGES_URL", "").strip()
+            history_href = f"{pages_url.rstrip('/')}/history.html" if pages_url else "history.html"
+            nav_links = [f'<a href="{history_href}">📜 歷史紀錄</a>']
+            nav_links += [
+                f'<a href="#{sec_id}">{html.escape(heading)}{f" ({count})" if count else ""}</a>'
+                for sec_id, heading, count in nav_sections
+            ]
+            body_lines.append(f'<nav class="quicknav">{" · ".join(nav_links)}</nav>')
         elif line.startswith("## "):
             close_section()
             heading = line[3:]
@@ -1249,6 +1330,8 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
     (PAGES_DIR / "index.html").write_text(html_text, encoding="utf-8")
     (PAGES_DIR / "latest.html").write_text(html_text, encoding="utf-8")
     (PAGES_ARCHIVE_DIR / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}.html").write_text(html_text, encoding="utf-8")
+    history = append_history_entry(now, run, changes, counts)
+    HISTORY_HTML_PATH.write_text(render_history_html(history), encoding="utf-8")
 
     summary_lines = [
         "PAGCOR Regulatory Daily Monitor",
@@ -1280,6 +1363,7 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
         # time someone opens it after the next run.
         archive_url = f"{pages_url.rstrip('/')}/reports/{now.strftime('%Y-%m-%d_%H-%M-%S')}.html"
         summary_lines.append(f"本次報告：{archive_url}")
+        summary_lines.append(f"歷史紀錄：{pages_url.rstrip('/')}/history.html")
     else:
         summary_lines.append(f"本次報告：reports/{now.strftime('%Y-%m-%d_%H-%M-%S')}.html")
     (REPORT_DIR / "telegram_summary.txt").write_text("\n".join(summary_lines), encoding="utf-8")
