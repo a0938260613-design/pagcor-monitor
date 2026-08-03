@@ -542,10 +542,11 @@ def evidence_text(snapshot: ResourceSnapshot, change: dict | None = None) -> str
     return " ".join(parts).lower()
 
 
-def classify_severity(snapshot: ResourceSnapshot, change_type: str, change: dict | None = None) -> tuple[str, str | None]:
-    """Return (severity, reason). reason is the matched keyword/signal, so the
-    report can show readers *why* something was classified the way it was,
-    instead of just a bare label they have to trust blindly."""
+def classify_severity(snapshot: ResourceSnapshot, change_type: str, change: dict | None = None) -> tuple[str, tuple[str, str] | None]:
+    """Return (severity, reason). reason is (zh, en) - the matched keyword/
+    signal in both languages, so the report can show readers *why* something
+    was classified the way it was, instead of just a bare label to trust
+    blindly."""
     if change_type == "resurfaced":
         # This isn't a real editorial change (see build_recent_removals) - it's
         # our own crawl having briefly missed a resource that was always there.
@@ -559,43 +560,43 @@ def classify_severity(snapshot: ResourceSnapshot, change_type: str, change: dict
         return "Low", None
 
     text = evidence_text(snapshot, change)
-    # (matched-text pattern, plain-language reason shown to readers). Matching
+    # (matched-text pattern, (zh, en) reason shown to readers). Matching
     # stays on the English text actually used on PAGCOR's site; only the
     # displayed reason is translated, so non-engineers aren't shown raw
     # code-search strings like "domain-names" in the report.
     critical_patterns = [
-        ("cancelled", "業者資格被取消"),
-        ("reported websites", "被回報的違規網站"),
-        ("counterfeit", "偽造證書"),
-        ("registered brands", "已登記品牌"),
-        ("domain names", "網域名稱"),
-        ("domain-names", "網域名稱"),
-        ("licensees", "持牌業者"),
-        ("accredited", "認可資格"),
-        ("gaming system administrator", "遊戲系統管理者"),
-        ("regulatory framework", "監理規範"),
-        ("amendment", "修訂或修正案"),
+        ("cancelled", ("業者資格被取消", "Operator eligibility cancelled")),
+        ("reported websites", ("被回報的違規網站", "Reported non-compliant website")),
+        ("counterfeit", ("偽造證書", "Counterfeit certificate")),
+        ("registered brands", ("已登記品牌", "Registered brand")),
+        ("domain names", ("網域名稱", "Domain name")),
+        ("domain-names", ("網域名稱", "Domain name")),
+        ("licensees", ("持牌業者", "Licensee")),
+        ("accredited", ("認可資格", "Accreditation")),
+        ("gaming system administrator", ("遊戲系統管理者", "Gaming system administrator")),
+        ("regulatory framework", ("監理規範", "Regulatory framework")),
+        ("amendment", ("修訂或修正案", "Amendment")),
     ]
     high_patterns = [
-        ("announcement", "公告"),
-        ("notice", "通知"),
-        ("application kit", "申請文件套組"),
-        ("requirements", "申請條件"),
-        ("schedule of fees", "費率表"),
-        ("industry statistic", "產業統計數據"),
-        ("industry data", "產業數據"),
-        ("player exclusion", "玩家排除名單"),
+        ("announcement", ("公告", "Announcement")),
+        ("notice", ("通知", "Notice")),
+        ("application kit", ("申請文件套組", "Application kit")),
+        ("requirements", ("申請條件", "Requirements")),
+        ("schedule of fees", ("費率表", "Schedule of fees")),
+        ("industry statistic", ("產業統計數據", "Industry statistics")),
+        ("industry data", ("產業數據", "Industry data")),
+        ("player exclusion", ("玩家排除名單", "Player exclusion list")),
     ]
     medium_patterns = [
-        ("manual", "操作手冊"),
-        ("guideline", "指引"),
-        ("form", "申請表單"),
-        ("technical standard", "技術標準"),
-        ("standard", "標準"),
+        ("manual", ("操作手冊", "Operations manual")),
+        ("guideline", ("指引", "Guideline")),
+        ("form", ("申請表單", "Application form")),
+        ("technical standard", ("技術標準", "Technical standard")),
+        ("standard", ("標準", "Standard")),
     ]
 
     if change and (change.get("added_domains") or change.get("removed_domains")):
-        return "Critical", "網域清單變動"
+        return "Critical", ("網域清單變動", "Domain list change")
     for pattern, reason in critical_patterns:
         if pattern in text:
             return "Critical", reason
@@ -614,25 +615,32 @@ def severity_for(snapshot: ResourceSnapshot, change_type: str, change: dict | No
     return classify_severity(snapshot, change_type, change)[0]
 
 
-def business_impact(snapshot: ResourceSnapshot, severity: str, change_type: str, change: dict) -> str:
+def business_impact(snapshot: ResourceSnapshot, severity: str, change_type: str, change: dict) -> tuple[str, str]:
     if change_type == "resurfaced":
-        return "非官方異動，是本系統爬取不穩定造成的暫時性遺漏，已自動修正基準，不需要人工處理。"
+        return "非官方異動，是本系統爬取不穩定造成的暫時性遺漏，已自動修正基準，不需要人工處理。", \
+            "Not an official change - a temporary gap caused by unstable crawling on our end. The baseline has been auto-corrected; no action needed."
     text = evidence_text(snapshot, change)
     if "cancelled" in text:
-        return "可能涉及業者資格取消或市場准入狀態變化，需優先人工複核。"
+        return "可能涉及業者資格取消或市場准入狀態變化，需優先人工複核。", \
+            "May involve an operator's eligibility being cancelled or a change in market-access status - prioritize manual review."
     if "domain" in text or change.get("added_domains") or change.get("removed_domains"):
-        return "可能涉及合法品牌、平台或網域名單變動，會直接影響市場與合規判讀。"
+        return "可能涉及合法品牌、平台或網域名單變動，會直接影響市場與合規判讀。", \
+            "May involve a change to the list of legitimate brands, platforms, or domains, directly affecting market and compliance assessment."
     if "registered brands" in text or "licensees" in text or "accredited" in text:
-        return "可能涉及受監管業者、品牌或認可實體名單變動。"
+        return "可能涉及受監管業者、品牌或認可實體名單變動。", \
+            "May involve a change to the list of regulated operators, brands, or accredited entities."
     if "regulatory framework" in text or "amendment" in text:
-        return "可能涉及正式規範或修訂，需評估對營運與合規流程的影響。"
+        return "可能涉及正式規範或修訂，需評估對營運與合規流程的影響。", \
+            "May involve a formal regulation or amendment - assess the impact on operations and compliance processes."
     if "announcement" in text or "notice" in text:
-        return "PAGCOR 發布公告或通知，需確認是否有市場或合規影響。"
+        return "PAGCOR 發布公告或通知，需確認是否有市場或合規影響。", \
+            "PAGCOR issued an announcement or notice - confirm whether it has market or compliance implications."
     if "industry" in text or "player exclusion" in text:
-        return "產業統計或排除資料更新，可作為市場追蹤與報告來源。"
+        return "產業統計或排除資料更新，可作為市場追蹤與報告來源。", \
+            "Industry statistics or exclusion data updated - useful as a source for market tracking and reporting."
     if severity == "Medium":
-        return "文件或流程資料有變動，建議排入例行檢視。"
-    return "低風險變動，已留痕供追溯。"
+        return "文件或流程資料有變動，建議排入例行檢視。", "Document or process information changed - schedule for routine review."
+    return "低風險變動，已留痕供追溯。", "Low-risk change, logged for audit trail."
 
 
 
@@ -860,23 +868,27 @@ def compare_snapshots(
     return changes
 
 
-def format_list(items: list[str], limit: int = 12) -> str:
+def format_list(items: list[str], limit: int = 12, lang: str = "zh") -> str:
     if not items:
-        return "無"
+        return "無" if lang == "zh" else "None"
     shown = items[:limit]
-    suffix = f"，另有 {len(items) - limit} 項" if len(items) > limit else ""
+    if len(items) > limit:
+        extra = len(items) - limit
+        suffix = f"，另有 {extra} 項" if lang == "zh" else f", plus {extra} more"
+    else:
+        suffix = ""
     return "、".join(shown) + suffix
 
 
-def change_label(change_type: str) -> str:
+def change_label(change_type: str) -> tuple[str, str]:
     return {
-        "added": "新增資源",
-        "removed": "移除資源",
-        "resurfaced": "重新確認（近期曾消失）",
-        "content_changed": "內容更新",
-        "links_changed": "連結清單更新",
-        "fetch_failed": "抓取失敗",
-    }.get(change_type, change_type)
+        "added": ("新增資源", "New resource"),
+        "removed": ("移除資源", "Removed resource"),
+        "resurfaced": ("重新確認（近期曾消失）", "Reconfirmed (briefly missing recently)"),
+        "content_changed": ("內容更新", "Content updated"),
+        "links_changed": ("連結清單更新", "Link list updated"),
+        "fetch_failed": ("抓取失敗", "Fetch failed"),
+    }.get(change_type, (change_type, change_type))
 
 
 def format_bytes(size: int) -> str:
@@ -887,77 +899,111 @@ def format_bytes(size: int) -> str:
     return f"{size} bytes"
 
 
-def plain_change_summary(change: dict) -> str:
+def plain_change_summary(change: dict) -> tuple[str, str]:
     change_type = change["type"]
     if change_type == "added":
-        base = "這是本次第一次被監控到的新資源。"
+        base_zh, base_en = "這是本次第一次被監控到的新資源。", "This is the first time this resource has been monitored. "
         excerpt = first_excerpt(change["snapshot"])
-        return f"{base}內容開頭：{excerpt}" if excerpt else f"{base}請確認它是否為新的公告、表單、名單或統計資料。"
+        if excerpt:
+            return f"{base_zh}內容開頭：{excerpt}", f"{base_en}Content starts with: {excerpt}"
+        return f"{base_zh}請確認它是否為新的公告、表單、名單或統計資料。", \
+            f"{base_en}Please confirm whether this is a new announcement, form, list, or statistical report."
     if change_type == "removed":
-        base = "這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。"
+        base_zh = "這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。"
+        base_en = "This resource is no longer reachable. It may have been officially removed, renamed, moved, or its source link deleted."
         excerpt = first_excerpt(change["snapshot"])
-        return f"{base}移除前的內容開頭：{excerpt}" if excerpt else base
+        if excerpt:
+            return f"{base_zh}移除前的內容開頭：{excerpt}", f"{base_en} Content before removal started with: {excerpt}"
+        return base_zh, base_en
     if change_type == "resurfaced":
         removed_at = change.get("removed_at", "近期")
         return (
             f"此資源在 {removed_at} 前後曾短暫從可抓取清單中消失，本次重新確認存在。"
             "研判為爬取不穩定所致（例如網站逾時），並非官方異動；系統已自動修正基準，不需要特別處理。"
+        ), (
+            f"This resource briefly disappeared around {removed_at} and has now been reconfirmed. "
+            "Likely caused by unstable crawling (e.g. site timeouts), not an official change; "
+            "the baseline has been auto-corrected - no action needed."
         )
     if change_type == "fetch_failed":
-        return "這次無法成功讀取既有資源，因此不代表內容真的改變；需要下次重跑或人工開啟確認。"
+        return "這次無法成功讀取既有資源，因此不代表內容真的改變；需要下次重跑或人工開啟確認。", \
+            "This resource could not be fetched this time, so this does not necessarily mean its content changed; needs a re-run or manual check."
     if change_type == "links_changed":
         added = len(change.get("added_links", []))
         removed = len(change.get("removed_links", []))
-        return f"來源頁面的連結清單改變：新增 {added} 個連結、移除 {removed} 個連結。"
+        return f"來源頁面的連結清單改變：新增 {added} 個連結、移除 {removed} 個連結。", \
+            f"The link list on the source page changed: {added} link(s) added, {removed} link(s) removed."
     if change_type == "content_changed":
         if change.get("cosmetic_only"):
-            return "此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。"
-        parts = []
+            return "此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。", \
+                "This file was regenerated (e.g. re-exported officially or a server-side touch), but the actual text content is unchanged - safe to ignore."
+        parts_zh, parts_en = [], []
         if change.get("binary_changed"):
-            parts.append("檔案本身有更新")
+            parts_zh.append("檔案本身有更新")
+            parts_en.append("the file itself was updated")
         if change.get("text_changed"):
-            parts.append("文字內容有變化")
+            parts_zh.append("文字內容有變化")
+            parts_en.append("text content changed")
         if change.get("size_delta"):
-            direction = "增加" if change["size_delta"] > 0 else "減少"
-            parts.append(f"大小{direction} {format_bytes(abs(change['size_delta']))}")
+            direction_zh = "增加" if change["size_delta"] > 0 else "減少"
+            direction_en = "increased" if change["size_delta"] > 0 else "decreased"
+            size_str = format_bytes(abs(change["size_delta"]))
+            parts_zh.append(f"大小{direction_zh} {size_str}")
+            parts_en.append(f"size {direction_en} by {size_str}")
         if change.get("added_dates") or change.get("removed_dates"):
-            parts.append("日期文字有變化")
+            parts_zh.append("日期文字有變化")
+            parts_en.append("date text changed")
         if change.get("added_domains") or change.get("removed_domains"):
-            parts.append("網域文字有變化")
-        return "、".join(parts) + "。" if parts else "系統偵測到內容有變化，但沒有抓到可以分類說明的日期、網域或連結差異，建議直接打開來源確認。"
-    return "系統偵測到變動，請依來源內容人工複核。"
+            parts_zh.append("網域文字有變化")
+            parts_en.append("domain text changed")
+        if parts_zh:
+            return "、".join(parts_zh) + "。", ", ".join(parts_en).capitalize() + "."
+        return "系統偵測到內容有變化，但沒有抓到可以分類說明的日期、網域或連結差異，建議直接打開來源確認。", \
+            "The system detected a content change but found no classifiable date, domain, or link differences - recommend opening the source directly to confirm."
+    return "系統偵測到變動，請依來源內容人工複核。", "The system detected a change - please review the source content manually."
 COMPACT_CHANGE_TYPES = {"added", "removed", "resurfaced", "fetch_failed"}
 
-DOCUMENT_KIND_LABELS = {"pdf": "PDF", "excel": "Excel", "document": "Word/文件", "csv": "CSV"}
+DOCUMENT_KIND_LABELS = {"pdf": ("PDF", "PDF"), "excel": ("Excel", "Excel"), "document": ("Word/文件", "Word document"), "csv": ("CSV", "CSV")}
 
 
-def data_location_label(snapshot: ResourceSnapshot) -> str:
+def data_location_label(snapshot: ResourceSnapshot) -> tuple[str, str]:
     """Plain-language answer to "where would I actually see this change?" -
     the HTML page itself, or a file the reader has to open separately."""
     if snapshot.kind == "html":
-        return "前端網頁 — 瀏覽器打開網址就看得到"
-    kind_label = DOCUMENT_KIND_LABELS.get(snapshot.kind, snapshot.kind)
-    return f"後端文件（{kind_label}）— 需點開檔案才看得到最新內容"
+        return "前端網頁 — 瀏覽器打開網址就看得到", "Front-end webpage - visible directly by opening the URL in a browser"
+    kind_zh, kind_en = DOCUMENT_KIND_LABELS.get(snapshot.kind, (snapshot.kind, snapshot.kind))
+    return (
+        f"後端文件（{kind_zh}）— 需點開檔案才看得到最新內容",
+        f"Back-end file ({kind_en}) - must open the file to see the latest content",
+    )
 
 
-def location_summary(change: dict, limit: int = 3) -> str:
+def location_summary(change: dict, limit: int = 3) -> tuple[str, str]:
     """"(N locations changed: ...)" suffix for the collapsed item title, so
     readers see how many places in a file changed without expanding it."""
     if change.get("type") != "content_changed":
-        return ""
+        return "", ""
     detail_changes = change.get("detail_changes", [])
     if not detail_changes:
-        return ""
+        return "", ""
     labels = [d.get("label", "未知位置") for d in detail_changes]
     if len(labels) <= limit:
-        return f"（共 {len(labels)} 處異動：{'、'.join(labels)}）"
-    return f"（共 {len(labels)} 處異動，含 {'、'.join(labels[:limit])} 等）"
+        shown = "、".join(labels)
+        return f"（共 {len(labels)} 處異動：{shown}）", f" ({len(labels)} location(s) changed: {shown})"
+    shown = "、".join(labels[:limit])
+    return f"（共 {len(labels)} 處異動，含 {shown} 等）", f" ({len(labels)} location(s) changed, including {shown}, etc.)"
 
 
-def render_change(lines: list[str], idx: int, change: dict, include_details: bool = True) -> None:
+def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_details: bool = True) -> None:
+    """Append (zh, en) line pairs describing one change. Every line carries
+    the same Markdown-structural prefix in both languages (headings, "- "
+    bullets, blank lines) so markdown_to_basic_html can drive HTML structure
+    off either side while showing both languages in the same elements."""
     snapshot = change["snapshot"]
     title = readable_title(snapshot)
     change_type = change["type"]
+    label_zh, label_en = change_label(change_type)
+    loc_zh, loc_en = data_location_label(snapshot)
 
     is_cosmetic = change_type == "content_changed" and change.get("cosmetic_only")
     if change_type in COMPACT_CHANGE_TYPES or is_cosmetic:
@@ -965,55 +1011,80 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
         # appeared, vanished, couldn't be fetched, or - for is_cosmetic - only
         # got a new file hash with no real text change), so a full 5-line
         # block per item is pure repetition. One or two lines is enough.
-        detail = plain_change_summary(change)
+        detail_zh, detail_en = plain_change_summary(change)
         if change_type == "fetch_failed":
-            detail = f"{detail}（錯誤：{change.get('error', '')}）"
-        label = "技術性更新（內容未變）" if is_cosmetic else change_label(change_type)
+            error = change.get("error", "")
+            detail_zh = f"{detail_zh}（錯誤：{error}）"
+            detail_en = f"{detail_en} (Error: {error})"
+        if is_cosmetic:
+            label_zh, label_en = "技術性更新（內容未變）", "Technical update (content unchanged)"
         lines += [
-            f"### {idx}. [{change['severity']}] {label}：{title}",
-            "",
-            f"- {detail}",
-            f"- 資料位置：{data_location_label(snapshot)}",
+            (f"### {idx}. [{change['severity']}] {label_zh}：{title}", f"### {idx}. [{change['severity']}] {label_en}: {title}"),
+            ("", ""),
+            (f"- {detail_zh}", f"- {detail_en}"),
+            (f"- 資料位置：{loc_zh}", f"- Where to find it: {loc_en}"),
         ]
         if change.get("severity_reason"):
-            lines.append(f"- 分類依據：內容涉及「{change['severity_reason']}」")
-        lines.append(f"- 來源：{snapshot.url}")
-        lines.append("")
+            reason_zh, reason_en = change["severity_reason"]
+            lines.append((f"- 分類依據：內容涉及「{reason_zh}」", f'- Classification basis: involves "{reason_en}"'))
+        lines.append((f"- 來源：{snapshot.url}", f"- Source: {snapshot.url}"))
+        lines.append(("", ""))
         return
 
+    summary_zh, summary_en = plain_change_summary(change)
+    impact_zh, impact_en = change["impact"]
+    loc_summary_zh, loc_summary_en = location_summary(change)
     lines += [
-        f"### {idx}. [{change['severity']}] {title}{location_summary(change)}",
-        "",
-        f"- 變動：{change_label(change_type)}",
-        f"- 實際狀況：{plain_change_summary(change)}",
-        f"- 來源：{snapshot.url}",
-        f"- 資料位置：{data_location_label(snapshot)}",
-        f"- 可能影響：{change['impact']}",
+        (f"### {idx}. [{change['severity']}] {title}{loc_summary_zh}", f"### {idx}. [{change['severity']}] {title}{loc_summary_en}"),
+        ("", ""),
+        (f"- 變動：{label_zh}", f"- Change: {label_en}"),
+        (f"- 實際狀況：{summary_zh}", f"- Details: {summary_en}"),
+        (f"- 來源：{snapshot.url}", f"- Source: {snapshot.url}"),
+        (f"- 資料位置：{loc_zh}", f"- Where to find it: {loc_en}"),
+        (f"- 可能影響：{impact_zh}", f"- Possible impact: {impact_en}"),
     ]
     if change.get("severity_reason"):
-        lines.append(f"- 分類依據：內容涉及「{change['severity_reason']}」")
+        reason_zh, reason_en = change["severity_reason"]
+        lines.append((f"- 分類依據：內容涉及「{reason_zh}」", f'- Classification basis: involves "{reason_en}"'))
     if change["type"] == "content_changed":
-        lines.append(
-            f"- 檔案大小：原本 {format_bytes(change.get('old_size', 0))}，現在 {format_bytes(change.get('new_size', 0))}，差異 {change.get('size_delta', 0):+,} bytes"
-        )
-        lines.append(f"- 檔案狀態：{'檔案本身有更新' if change.get('binary_changed') else '檔案本身沒有變化'}；{'文字內容有變化' if change.get('text_changed') else '文字內容沒有變化'}")
+        old_size, new_size, size_delta = change.get("old_size", 0), change.get("new_size", 0), change.get("size_delta", 0)
+        lines.append((
+            f"- 檔案大小：原本 {format_bytes(old_size)}，現在 {format_bytes(new_size)}，差異 {size_delta:+,} bytes",
+            f"- File size: was {format_bytes(old_size)}, now {format_bytes(new_size)}, change {size_delta:+,} bytes",
+        ))
+        binary_state_zh = "檔案本身有更新" if change.get("binary_changed") else "檔案本身沒有變化"
+        binary_state_en = "File itself updated" if change.get("binary_changed") else "File itself unchanged"
+        text_state_zh = "文字內容有變化" if change.get("text_changed") else "文字內容沒有變化"
+        text_state_en = "text content changed" if change.get("text_changed") else "text content unchanged"
+        lines.append((f"- 檔案狀態：{binary_state_zh}；{text_state_zh}", f"- File status: {binary_state_en}; {text_state_en}"))
         if change.get("added_dates") or change.get("removed_dates"):
-            lines.append(f"- 日期變動：新增 {format_list(change.get('added_dates', []))}；移除 {format_list(change.get('removed_dates', []))}")
+            added_d, removed_d = change.get("added_dates", []), change.get("removed_dates", [])
+            lines.append((
+                f"- 日期變動：新增 {format_list(added_d)}；移除 {format_list(removed_d)}",
+                f"- Date changes: added {format_list(added_d, lang='en')}; removed {format_list(removed_d, lang='en')}",
+            ))
         else:
-            lines.append("- 日期變動：未偵測到新增或移除的日期文字")
+            lines.append(("- 日期變動：未偵測到新增或移除的日期文字", "- Date changes: no added or removed dates detected"))
         if change.get("added_domains") or change.get("removed_domains"):
-            lines.append(f"- 網域變動：新增 {format_list(change.get('added_domains', []))}；移除 {format_list(change.get('removed_domains', []))}")
+            added_dom, removed_dom = change.get("added_domains", []), change.get("removed_domains", [])
+            lines.append((
+                f"- 網域變動：新增 {format_list(added_dom)}；移除 {format_list(removed_dom)}",
+                f"- Domain changes: added {format_list(added_dom, lang='en')}; removed {format_list(removed_dom, lang='en')}",
+            ))
         else:
-            lines.append("- 網域變動：未偵測到新增或移除的網域文字")
+            lines.append(("- 網域變動：未偵測到新增或移除的網域文字", "- Domain changes: no added or removed domains detected"))
         detail_changes = change.get("detail_changes", [])
         if detail_changes:
-            lines.append("- 變動位置與文字片段：")
+            lines.append(("- 變動位置與文字片段：", "- Change locations and text snippets:"))
             for detail in detail_changes:
-                lines.append(f"  - {detail.get('label', '未知位置')}：{detail.get('type', '文字變更')}")
+                detail_label = detail.get("label", "未知位置")
+                detail_type_zh = detail.get("type", "文字變更")
+                detail_type_en = "page start" if detail_type_zh == "頁面開頭" else "text change"
+                lines.append((f"  - {detail_label}：{detail_type_zh}", f"  - {detail_label}: {detail_type_en}"))
                 for item in detail.get("added", [])[:4]:
-                    lines.append(f"    - 新增：{item}")
+                    lines.append((f"    - 新增：{item}", f"    - Added: {item}"))
                 for item in detail.get("removed", [])[:4]:
-                    lines.append(f"    - 移除：{item}")
+                    lines.append((f"    - 移除：{item}", f"    - Removed: {item}"))
                 page_match = PAGE_LABEL_RE.match(detail.get("label", ""))
                 if page_match and snapshot.kind == "pdf":
                     page_number = int(page_match.group(1))
@@ -1021,20 +1092,28 @@ def render_change(lines: list[str], idx: int, change: dict, include_details: boo
                     if old_local_path and snapshot.local_path:
                         old_thumb = render_pdf_page_thumbnail(ROOT / old_local_path, page_number)
                         if old_thumb:
-                            lines.append(f"![第 {page_number} 頁－修改前縮圖]({old_thumb})")
+                            alt = f"第 {page_number} 頁－修改前縮圖 / Page {page_number} - before"
+                            lines.append((f"![{alt}]({old_thumb})", f"![{alt}]({old_thumb})"))
                     if snapshot.local_path:
                         new_thumb = render_pdf_page_thumbnail(ROOT / snapshot.local_path, page_number)
                         if new_thumb:
-                            lines.append(f"![第 {page_number} 頁－修改後縮圖]({new_thumb})")
+                            alt = f"第 {page_number} 頁－修改後縮圖 / Page {page_number} - after"
+                            lines.append((f"![{alt}]({new_thumb})", f"![{alt}]({new_thumb})"))
         else:
-            lines.append("- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。")
-        lines.append("- 判讀方式：如果只有檔案大小改變、但文字內容沒變，很可能只是官方重新輸出或壓縮同一份文件，不一定代表內容有實質修改；仍建議打開來源確認版面與內容。")
+            lines.append((
+                "- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。",
+                "- Change locations and text snippets: no page/section-level text in the current baseline, or this file's text couldn't be extracted; a detailed baseline has now been established so future changes will show their location.",
+            ))
+        lines.append((
+            "- 判讀方式：如果只有檔案大小改變、但文字內容沒變，很可能只是官方重新輸出或壓縮同一份文件，不一定代表內容有實質修改；仍建議打開來源確認版面與內容。",
+            "- How to read this: if only the file size changed but the text content didn't, it's likely just an official re-export or re-compression of the same document, not necessarily a substantive change; still recommended to open the source to confirm layout and content.",
+        ))
     if change["type"] == "links_changed" and include_details:
         added = [item["text"] or item["url"] for item in change.get("added_links", [])]
         removed = [item["text"] or item["url"] for item in change.get("removed_links", [])]
-        lines.append(f"- 新增連結：{format_list(added)}")
-        lines.append(f"- 移除連結：{format_list(removed)}")
-    lines.append("")
+        lines.append((f"- 新增連結：{format_list(added)}", f"- Links added: {format_list(added, lang='en')}"))
+        lines.append((f"- 移除連結：{format_list(removed)}", f"- Links removed: {format_list(removed, lang='en')}"))
+    lines.append(("", ""))
 
 
 
@@ -1076,40 +1155,43 @@ def render_history_html(history: list[dict]) -> str:
         for key, label in (("critical", "Critical"), ("high", "High"), ("medium", "Medium"), ("low", "Low")):
             if entry.get(key):
                 badge_parts.append(f"{label} {entry[key]}")
-        badges = "、".join(badge_parts) if badge_parts else "無變動"
+        badges = html.escape("、".join(badge_parts)) if badge_parts else dual_span("無變動", "No changes")
         rows.append(
             f'<tr><td><a href="{html.escape(entry.get("file", ""))}">{html.escape(entry.get("timestamp", ""))}</a></td>'
             f'<td>{entry.get("resources", "-")}</td>'
             f'<td>{entry.get("changes", 0)}</td>'
-            f'<td>{html.escape(badges)}</td></tr>'
+            f'<td>{badges}</td></tr>'
         )
-    table_rows = "\n".join(rows) if rows else '<tr><td colspan="4">尚無歷史紀錄</td></tr>'
+    table_rows = "\n".join(rows) if rows else f'<tr><td colspan="4">{dual_span("尚無歷史紀錄", "No history yet")}</td></tr>'
     return """<!doctype html>
 <html lang=\"zh-Hant\">
 <head>
+""" + LANG_TOGGLE_SCRIPT + f"""
 <meta charset=\"utf-8\">
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-<title>PAGCOR Regulatory Monitor - 歷史紀錄</title>
+<title>PAGCOR Regulatory Monitor - History</title>
 <style>
-body{font-family:Arial,'Microsoft JhengHei',sans-serif;line-height:1.6;margin:32px;max-width:900px;color:#1f2937;background:#f8fafc}
-h1{font-size:26px;color:#111827}
-a{color:#1d4ed8;text-decoration:none}a:hover{text-decoration:underline}
-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
-th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:14px}
-th{background:#f1f5f9;font-weight:600}
-tr:hover td{background:#f8fafc}
-.back{display:inline-block;margin-bottom:16px}
+body{{font-family:Arial,'Microsoft JhengHei',sans-serif;line-height:1.6;margin:32px;max-width:900px;color:#1f2937;background:#f8fafc}}
+h1{{font-size:26px;color:#111827}}
+a{{color:#1d4ed8;text-decoration:none}}a:hover{{text-decoration:underline}}
+table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}}
+th,td{{padding:10px 12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:14px}}
+th{{background:#f1f5f9;font-weight:600}}
+tr:hover td{{background:#f8fafc}}
+.back{{display:inline-block;margin-bottom:16px}}
+{LANG_TOGGLE_STYLE}
 </style>
 </head>
 <body>
-<h1>PAGCOR Regulatory Monitor - 歷史紀錄</h1>
-<p class=\"back\"><a href=\"index.html\">&larr; 回到最新報告</a></p>
+<h1>{dual_span("PAGCOR Regulatory Monitor - 歷史紀錄", "PAGCOR Regulatory Monitor - History")} <button id="lang-toggle" type="button">EN</button></h1>
+<p class=\"back\"><a href=\"index.html\">&larr; {dual_span("回到最新報告", "Back to latest report")}</a></p>
 <table>
-<thead><tr><th>檢查時間</th><th>監控資源數</th><th>變動總數</th><th>分級摘要</th></tr></thead>
+<thead><tr><th>{dual_span("檢查時間", "Checked At")}</th><th>{dual_span("監控資源數", "Resources")}</th><th>{dual_span("變動總數", "Changes")}</th><th>{dual_span("分級摘要", "Severity Summary")}</th></tr></thead>
 <tbody>
 """ + table_rows + """
 </tbody>
 </table>
+""" + LANG_TOGGLE_INIT_JS + """
 </body>
 </html>
 """
@@ -1117,34 +1199,72 @@ tr:hover td{background:#f8fafc}
 
 COLLAPSIBLE_REPORT_SECTIONS = {"例行檢視", "低風險留痕"}
 
+LANG_TOGGLE_SCRIPT = """<script>
+(function(){
+  var saved = localStorage.getItem('pagcor-lang') || 'zh';
+  document.documentElement.setAttribute('data-lang', saved);
+})();
+</script>"""
 
-def markdown_to_basic_html(markdown: str) -> str:
-    """Render the report Markdown as HTML with a quick-nav bar and collapsible sections.
+LANG_TOGGLE_STYLE = """
+.lang-en{display:none}
+:root[data-lang="en"] .lang-en{display:inline}
+:root[data-lang="en"] .lang-zh{display:none}
+#lang-toggle{cursor:pointer;border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:2px 10px;font-size:13px;margin-left:4px}
+#lang-toggle:hover{background:#f1f5f9}
+"""
+
+LANG_TOGGLE_INIT_JS = """<script>
+(function(){
+  var btn = document.getElementById('lang-toggle');
+  if (!btn) return;
+  function label(){ return document.documentElement.getAttribute('data-lang') === 'en' ? '中文' : 'EN'; }
+  btn.textContent = label();
+  btn.addEventListener('click', function(){
+    var next = document.documentElement.getAttribute('data-lang') === 'en' ? 'zh' : 'en';
+    document.documentElement.setAttribute('data-lang', next);
+    localStorage.setItem('pagcor-lang', next);
+    btn.textContent = label();
+  });
+})();
+</script>"""
+
+
+def dual_span(zh: str, en: str) -> str:
+    return f'<span class="lang-zh">{html.escape(zh)}</span><span class="lang-en">{html.escape(en)}</span>'
+
+
+def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
+    """Render (zh, en) line pairs as HTML with a quick-nav bar, collapsible
+    sections, and a language toggle. Every line's zh and en side must share
+    the same Markdown-structural prefix (#, ##, ###, -, blank) - structure is
+    driven off the zh side, both languages render into the same elements via
+    dual_span, and a data-lang attribute on <html> shows/hides one side.
 
     Every ### item defaults to collapsed (just the [Severity] title shows) and
     the Medium/Low sections collapse as a whole, so a 76-change report opens as
     a scannable table of contents instead of one long scroll.
     """
-    raw_lines = [line.rstrip() for line in markdown.splitlines()]
+    raw_lines = [(zh.rstrip(), en.rstrip()) for zh, en in lines]
 
     # Pass 1: find ## section headings and count the ### items under each, for the nav bar.
-    nav_sections: list[tuple[str, str, int]] = []
-    current_heading: str | None = None
+    nav_sections: list[tuple[str, str, str, int]] = []
+    current_heading: tuple[str, str] | None = None
     current_count = 0
 
     def flush_nav() -> None:
         if current_heading is not None:
-            nav_sections.append((f"sec-{len(nav_sections)}", current_heading, current_count))
+            nav_sections.append((f"sec-{len(nav_sections)}", current_heading[0], current_heading[1], current_count))
 
-    for line in raw_lines:
-        if line.startswith("## "):
+    for zh, en in raw_lines:
+        if zh.startswith("## "):
             flush_nav()
-            current_heading = line[3:]
+            current_heading = (zh[3:], en[3:])
             current_count = 0
-        elif line.startswith("### ") and current_heading is not None:
+        elif zh.startswith("### ") and current_heading is not None:
             current_count += 1
     flush_nav()
-    section_ids = {heading: sec_id for sec_id, heading, _ in nav_sections}
+    section_ids = {heading_zh: sec_id for sec_id, heading_zh, _, _ in nav_sections}
 
     # Pass 2: convert to HTML, wrapping ### items and Medium/Low sections in <details>.
     body_lines: list[str] = []
@@ -1172,56 +1292,59 @@ def markdown_to_basic_html(markdown: str) -> str:
             body_lines.append("</details>")
             section_open = False
 
-    for line in raw_lines:
-        if not line:
+    for zh, en in raw_lines:
+        if not zh:
             # Note: a blank line always follows "### heading" (standard Markdown),
             # so closing the item here would end it before its bullet list ever
             # renders. Items only close at the next heading / end of document.
             close_list()
             continue
-        if line.startswith("# "):
+        if zh.startswith("# "):
             close_section()
-            body_lines.append(f"<h1>{html.escape(line[2:])}</h1>")
+            body_lines.append(f"<h1>{dual_span(zh[2:], en[2:])}</h1>")
             pages_url = os.getenv("GITHUB_PAGES_URL", "").strip()
             history_href = f"{pages_url.rstrip('/')}/history.html" if pages_url else "history.html"
-            nav_links = [f'<a href="{history_href}">📜 歷史紀錄</a>']
+            nav_links = [f'<a href="{history_href}">📜 {dual_span("歷史紀錄", "History")}</a>']
             nav_links += [
-                f'<a href="#{sec_id}">{html.escape(heading)}{f" ({count})" if count else ""}</a>'
-                for sec_id, heading, count in nav_sections
+                f'<a href="#{sec_id}">{dual_span(heading_zh, heading_en)}{f" ({count})" if count else ""}</a>'
+                for sec_id, heading_zh, heading_en, count in nav_sections
             ]
-            body_lines.append(f'<nav class="quicknav">{" · ".join(nav_links)}</nav>')
-        elif line.startswith("## "):
+            body_lines.append(
+                f'<nav class="quicknav">{" · ".join(nav_links)} · <button id="lang-toggle" type="button">EN</button></nav>'
+            )
+        elif zh.startswith("## "):
             close_section()
-            heading = line[3:]
-            sec_id = section_ids.get(heading, "")
-            if heading in COLLAPSIBLE_REPORT_SECTIONS:
-                body_lines.append(f'<details id="{sec_id}" class="section"><summary><h2>{html.escape(heading)}</h2></summary>')
+            heading_zh, heading_en = zh[3:], en[3:]
+            sec_id = section_ids.get(heading_zh, "")
+            if heading_zh in COLLAPSIBLE_REPORT_SECTIONS:
+                body_lines.append(f'<details id="{sec_id}" class="section"><summary><h2>{dual_span(heading_zh, heading_en)}</h2></summary>')
                 section_open = True
             else:
-                body_lines.append(f'<h2 id="{sec_id}">{html.escape(heading)}</h2>')
-        elif line.startswith("### "):
+                body_lines.append(f'<h2 id="{sec_id}">{dual_span(heading_zh, heading_en)}</h2>')
+        elif zh.startswith("### "):
             close_item()
-            body_lines.append(f'<details class="item"><summary>{html.escape(line[4:])}</summary>')
+            body_lines.append(f'<details class="item"><summary>{dual_span(zh[4:], en[4:])}</summary>')
             item_open = True
-        elif line.startswith("- "):
+        elif zh.startswith("- "):
             if not in_list:
                 body_lines.append("<ul>")
                 in_list = True
-            body_lines.append(f"<li>{html.escape(line[2:])}</li>")
-        elif MARKDOWN_IMAGE_RE.match(line):
+            body_lines.append(f"<li>{dual_span(zh[2:], en[2:])}</li>")
+        elif MARKDOWN_IMAGE_RE.match(zh):
             close_list()
-            alt, src = MARKDOWN_IMAGE_RE.match(line).groups()
+            alt, src = MARKDOWN_IMAGE_RE.match(zh).groups()
             # src is a data: URI we generated ourselves (base64 alphabet only),
-            # safe to place unescaped; alt text still goes through html.escape.
+            # safe to place unescaped; alt/title (bilingual already) still escaped.
             body_lines.append(f'<img class="page-thumb" alt="{html.escape(alt)}" title="{html.escape(alt)}" src="{src}" loading="lazy">')
         else:
             close_list()
-            body_lines.append(f"<p>{html.escape(line)}</p>")
+            body_lines.append(f"<p>{dual_span(zh, en)}</p>")
     close_section()
 
     return """<!doctype html>
 <html lang=\"zh-Hant\">
 <head>
+""" + LANG_TOGGLE_SCRIPT + """
 <meta charset=\"utf-8\">
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 <title>PAGCOR Regulatory Daily Monitor</title>
@@ -1239,10 +1362,11 @@ details.section summary h2{display:inline}
 details.section summary::before{content:"▶ ";font-size:14px;color:#6b7280}
 details.section[open] summary::before{content:"▼ "}
 img.page-thumb{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid #d1d5db;border-radius:6px}
+""" + LANG_TOGGLE_STYLE + """
 </style>
 </head>
 <body>
-""" + "\n".join(body_lines) + "\n</body>\n</html>\n"
+""" + "\n".join(body_lines) + "\n" + LANG_TOGGLE_INIT_JS + "\n</body>\n</html>\n"
 def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False, prev_resource_count: int = 0) -> Path:
     now = datetime.now()
     counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
@@ -1250,81 +1374,98 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
         counts[change["severity"]] += 1
     ordered = sorted(changes, key=lambda c: (SEVERITY_ORDER[c["severity"]], c["snapshot"].title, c["url"]))
 
-    lines = [
-        "# PAGCOR Regulatory Daily Monitor",
-        "",
-        f"- 檢查時間：{now.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 監控資源數：{len(run.resources)}",
-        f"- 抓取失敗數：{len(run.failures)}",
-        f"- 達到資源上限：{'是' if run.max_resources_hit else '否'}",
-        f"- 變動總數：{len(changes)}",
-        "",
-        "## 分級摘要",
-        "",
-        f"- Critical: {counts['Critical']}",
-        f"- High: {counts['High']}",
-        f"- Medium: {counts['Medium']}",
-        f"- Low: {counts['Low']}",
-        "",
+    lines: list[tuple[str, str]] = [
+        ("# PAGCOR Regulatory Daily Monitor", "# PAGCOR Regulatory Daily Monitor"),
+        ("", ""),
+        (f"- 檢查時間：{now.strftime('%Y-%m-%d %H:%M:%S')}", f"- Checked at: {now.strftime('%Y-%m-%d %H:%M:%S')}"),
+        (f"- 監控資源數：{len(run.resources)}", f"- Resources monitored: {len(run.resources)}"),
+        (f"- 抓取失敗數：{len(run.failures)}", f"- Fetch failures: {len(run.failures)}"),
+        (f"- 達到資源上限：{'是' if run.max_resources_hit else '否'}", f"- Resource limit reached: {'Yes' if run.max_resources_hit else 'No'}"),
+        (f"- 變動總數：{len(changes)}", f"- Total changes: {len(changes)}"),
+        ("", ""),
+        ("## 分級摘要", "## Severity Summary"),
+        ("", ""),
+        (f"- Critical: {counts['Critical']}", f"- Critical: {counts['Critical']}"),
+        (f"- High: {counts['High']}", f"- High: {counts['High']}"),
+        (f"- Medium: {counts['Medium']}", f"- Medium: {counts['Medium']}"),
+        (f"- Low: {counts['Low']}", f"- Low: {counts['Low']}"),
+        ("", ""),
     ]
     type_counts = Counter(c["type"] for c in changes)
     if type_counts:
-        type_summary = "、".join(
-            f"{change_label(t)} {n}"
-            for t, n in sorted(type_counts.items(), key=lambda item: -item[1])
-        )
-        lines += ["## 變動類型分布", "", f"- {type_summary}", ""]
+        sorted_types = sorted(type_counts.items(), key=lambda item: -item[1])
+        type_summary_zh = "、".join(f"{change_label(t)[0]} {n}" for t, n in sorted_types)
+        type_summary_en = ", ".join(f"{change_label(t)[1]} {n}" for t, n in sorted_types)
+        lines += [("## 變動類型分布", "## Change Type Distribution"), ("", ""), (f"- {type_summary_zh}", f"- {type_summary_en}"), ("", "")]
 
-    notices: list[str] = []
+    notices: list[tuple[str, str]] = []
     if run.max_resources_hit:
-        notices.append("本次監控的資源數量達到系統設定的上限，可能還有頁面沒抓完。系統不會在這種情況下判定舊資源已被移除，以避免誤報。若要完整檢查全站是否有資源被移除，請提高監控上限後重新執行。")
+        notices.append((
+            "本次監控的資源數量達到系統設定的上限，可能還有頁面沒抓完。系統不會在這種情況下判定舊資源已被移除，以避免誤報。若要完整檢查全站是否有資源被移除，請提高監控上限後重新執行。",
+            "This run reached the configured resource limit, so some pages may not have been crawled yet. The system will not treat missing resources as removed in this case, to avoid false alarms. To fully check whether any resources were removed site-wide, raise the monitoring limit and re-run.",
+        ))
     if shortfall:
-        notices.append(
-            f"本次抓到的資源數（{len(run.resources)}）明顯低於上次基準（{prev_resource_count}），疑似爬取不完整（可能是網站逾時或連線問題），而不是真的有資源被移除。系統這次不會判定短少的資源為「已移除」，也不會更新比對基準，等下次抓齊後才會正式比對。"
-        )
+        notices.append((
+            f"本次抓到的資源數（{len(run.resources)}）明顯低於上次基準（{prev_resource_count}），疑似爬取不完整（可能是網站逾時或連線問題），而不是真的有資源被移除。系統這次不會判定短少的資源為「已移除」，也不會更新比對基準，等下次抓齊後才會正式比對。",
+            f"This run only found {len(run.resources)} resources, well below the last baseline of {prev_resource_count} - the crawl looks incomplete (likely a site timeout or connection issue), not a real removal. The system will not mark the missing resources as \"removed\" this time, nor update the comparison baseline, until a future run completes a full crawl.",
+        ))
     anomaly_types = [
         (t, n) for t, n in type_counts.items()
         if t != "resurfaced" and n >= 20 and len(run.resources) > 0 and n / len(run.resources) >= 0.05
     ]
     if anomaly_types:
-        parts = "、".join(f"{change_label(t)}（{n} 筆）" for t, n in sorted(anomaly_types, key=lambda item: -item[1]))
-        notices.append(f"本次{parts}的數量明顯偏高，建議先確認是否為爬取異常造成的一次性現象，而非真實大量異動，再逐筆檢視。")
+        sorted_anomalies = sorted(anomaly_types, key=lambda item: -item[1])
+        parts_zh = "、".join(f"{change_label(t)[0]}（{n} 筆）" for t, n in sorted_anomalies)
+        parts_en = ", ".join(f"{change_label(t)[1]} ({n})" for t, n in sorted_anomalies)
+        notices.append((
+            f"本次{parts_zh}的數量明顯偏高，建議先確認是否為爬取異常造成的一次性現象，而非真實大量異動，再逐筆檢視。",
+            f"The count of {parts_en} this run is unusually high - recommend first confirming whether this is a one-off crawl anomaly rather than a genuine wave of changes, before reviewing item by item.",
+        ))
     if notices:
-        lines += ["## 注意", ""]
-        for notice in notices:
-            lines.append(f"- {notice}")
-        lines.append("")
+        lines += [("## 注意", "## Notice"), ("", "")]
+        for notice_zh, notice_en in notices:
+            lines.append((f"- {notice_zh}", f"- {notice_en}"))
+        lines.append(("", ""))
 
     urgent = [c for c in ordered if c["severity"] in {"Critical", "High"}]
     if urgent:
-        lines += ["## 需要優先閱讀", "", "建議：以下項目請優先人工複核來源文件。", ""]
+        lines += [
+            ("## 需要優先閱讀", "## Priority Review"), ("", ""),
+            ("建議：以下項目請優先人工複核來源文件。", "Recommendation: please prioritize manual review of the source documents for the items below."), ("", ""),
+        ]
         for idx, change in enumerate(urgent, 1):
             render_change(lines, idx, change)
 
     medium = [c for c in ordered if c["severity"] == "Medium"]
     low = [c for c in ordered if c["severity"] == "Low"]
     if medium:
-        lines += ["## 例行檢視", "", "建議：非急迫，排入例行檢視即可。", ""]
+        lines += [
+            ("## 例行檢視", "## Routine Review"), ("", ""),
+            ("建議：非急迫，排入例行檢視即可。", "Recommendation: not urgent, schedule for routine review."), ("", ""),
+        ]
         for idx, change in enumerate(medium, 1):
             render_change(lines, idx, change)
     if low:
-        lines += ["## 低風險留痕", "", "以下為低風險變動，僅留存追溯紀錄，不需要立即處理。", ""]
+        lines += [
+            ("## 低風險留痕", "## Low-Risk Log"), ("", ""),
+            ("以下為低風險變動，僅留存追溯紀錄，不需要立即處理。", "The items below are low-risk changes, kept only for audit trail - no immediate action needed."), ("", ""),
+        ]
         for idx, change in enumerate(low, 1):
             render_change(lines, idx, change, include_details=False)
     if not ordered:
-        lines += ["## 今日結果", "", "未偵測到變動。", ""]
+        lines += [("## 今日結果", "## Result"), ("", ""), ("未偵測到變動。", "No changes detected."), ("", "")]
 
     if run.failures:
-        lines += ["## 抓取失敗", ""]
+        lines += [("## 抓取失敗", "## Fetch Failures"), ("", "")]
         for failure in run.failures:
-            lines.append(f"- {failure['url']}：{failure['error']}")
-        lines.append("")
+            lines.append((f"- {failure['url']}：{failure['error']}", f"- {failure['url']}: {failure['error']}"))
+        lines.append(("", ""))
 
-    report_text = "\n".join(lines)
+    report_text = "\n".join(zh for zh, _en in lines)
     report_path = REPORT_DIR / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}.md"
     report_path.write_text(report_text, encoding="utf-8")
     (REPORT_DIR / "latest.md").write_text(report_text, encoding="utf-8")
-    html_text = markdown_to_basic_html(report_text)
+    html_text = markdown_to_basic_html(lines)
     (REPORT_DIR / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}.html").write_text(html_text, encoding="utf-8")
     (REPORT_DIR / "latest.html").write_text(html_text, encoding="utf-8")
     (PAGES_DIR / "index.html").write_text(html_text, encoding="utf-8")
@@ -1342,14 +1483,14 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
         f"監控資源數：{len(run.resources)} | 抓取失敗：{len(run.failures)}",
     ]
     if type_counts:
-        summary_lines.append(f"變動類型：{type_summary}")
+        summary_lines.append(f"變動類型：{type_summary_zh}")
     summary_lines.append("")
     if urgent:
         summary_lines.append("優先閱讀：")
         for idx, change in enumerate(urgent[:8], 1):
-            summary_lines.append(f"{idx}. [{change['severity']}] {change_label(change['type'])} - {readable_title(change['snapshot'])}")
+            summary_lines.append(f"{idx}. [{change['severity']}] {change_label(change['type'])[0]} - {readable_title(change['snapshot'])}")
             if change["type"] not in COMPACT_CHANGE_TYPES:
-                summary_lines.append(f"   影響：{change['impact']}")
+                summary_lines.append(f"   影響：{change['impact'][0]}")
         if len(urgent) > 8:
             summary_lines.append(f"另有 {len(urgent) - 8} 個 Critical/High 變動，請看完整報告。")
     else:
