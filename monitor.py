@@ -1219,32 +1219,39 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
                 if page_match and snapshot.kind == "pdf":
                     page_number = int(page_match.group(1))
                     old_local_path = change.get("old_local_path")
+                    old_thumb = None
+                    new_thumb = None
                     if old_local_path and snapshot.local_path:
                         old_thumb = render_pdf_page_thumbnail(
                             ROOT / old_local_path, page_number,
                             highlight_texts=detail.get("removed"), highlight_color=REMOVED_HIGHLIGHT_COLOR,
                         )
-                        if old_thumb:
-                            # Visible caption, not just alt/title (which most readers never see) -
-                            # states which image this is (before/after) and what the box color means.
-                            lines.append((
-                                f"🔴 第 {page_number} 頁－修改前：紅框標示即將被移除的內容",
-                                f"🔴 Page {page_number} - Before: red box marks content that was removed",
-                            ))
-                            alt = f"Page {page_number} - before"
-                            lines.append((f"![{alt}]({old_thumb})", f"![{alt}]({old_thumb})"))
                     if snapshot.local_path:
                         new_thumb = render_pdf_page_thumbnail(
                             ROOT / snapshot.local_path, page_number,
                             highlight_texts=detail.get("added"), highlight_color=ADDED_HIGHLIGHT_COLOR,
                         )
-                        if new_thumb:
-                            lines.append((
-                                f"🟢 第 {page_number} 頁－修改後：綠框標示新增的內容",
-                                f"🟢 Page {page_number} - After: green box marks newly added content",
-                            ))
-                            alt = f"Page {page_number} - after"
-                            lines.append((f"![{alt}]({new_thumb})", f"![{alt}]({new_thumb})"))
+                    if old_thumb and new_thumb:
+                        # Side by side, not stacked - scanning left-right to spot the
+                        # difference is much easier than scrolling between two stacked shots.
+                        compare_html = render_thumbnail_compare(page_number, old_thumb, new_thumb)
+                        lines.append((compare_html, compare_html))
+                    elif old_thumb:
+                        # Visible caption, not just alt/title (which most readers never see) -
+                        # states which image this is (before/after) and what the box color means.
+                        lines.append((
+                            f"🔴 第 {page_number} 頁－修改前：紅框標示即將被移除的內容",
+                            f"🔴 Page {page_number} - Before: red box marks content that was removed",
+                        ))
+                        alt = f"Page {page_number} - before"
+                        lines.append((f"![{alt}]({old_thumb})", f"![{alt}]({old_thumb})"))
+                    elif new_thumb:
+                        lines.append((
+                            f"🟢 第 {page_number} 頁－修改後：綠框標示新增的內容",
+                            f"🟢 Page {page_number} - After: green box marks newly added content",
+                        ))
+                        alt = f"Page {page_number} - after"
+                        lines.append((f"![{alt}]({new_thumb})", f"![{alt}]({new_thumb})"))
         else:
             lines.append((
                 "- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。",
@@ -1380,6 +1387,29 @@ def dual_span(zh: str, en: str) -> str:
     return f'<span class="lang-zh">{html.escape(zh)}</span><span class="lang-en">{html.escape(en)}</span>'
 
 
+def render_thumbnail_compare(page_number: int, old_thumb: str, new_thumb: str) -> str:
+    """Side-by-side before/after PDF page thumbnails, so a reader can spot
+    the difference by scanning left-right instead of scrolling up-down
+    between two stacked screenshots. Wraps to stacked automatically on
+    narrow screens via flex-wrap (see .thumb-compare CSS)."""
+    before_caption = dual_span(
+        f"🔴 第 {page_number} 頁－修改前：紅框標示即將被移除的內容",
+        f"🔴 Page {page_number} - Before: red box marks content that was removed",
+    )
+    after_caption = dual_span(
+        f"🟢 第 {page_number} 頁－修改後：綠框標示新增的內容",
+        f"🟢 Page {page_number} - After: green box marks newly added content",
+    )
+    return (
+        '<div class="thumb-compare">'
+        f'<div class="thumb-col"><p>{before_caption}</p>'
+        f'<img class="page-thumb" alt="Page {page_number} - before" title="Page {page_number} - before" src="{old_thumb}" loading="lazy"></div>'
+        f'<div class="thumb-col"><p>{after_caption}</p>'
+        f'<img class="page-thumb" alt="Page {page_number} - after" title="Page {page_number} - after" src="{new_thumb}" loading="lazy"></div>'
+        "</div>"
+    )
+
+
 def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
     """Render (zh, en) line pairs as HTML with a quick-nav bar, collapsible
     sections, and a language toggle. Every line's zh and en side must share
@@ -1482,6 +1512,11 @@ def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
             # src is a data: URI we generated ourselves (base64 alphabet only),
             # safe to place unescaped; alt/title (bilingual already) still escaped.
             body_lines.append(f'<img class="page-thumb" alt="{html.escape(alt)}" title="{html.escape(alt)}" src="{src}" loading="lazy">')
+        elif zh.startswith('<div class="thumb-compare">'):
+            # Pre-built raw HTML from render_thumbnail_compare (bilingual
+            # captions already baked in via dual_span) - pass through as-is.
+            close_list()
+            body_lines.append(zh)
         else:
             close_list()
             body_lines.append(f"<p>{dual_span(zh, en)}</p>")
@@ -1508,6 +1543,10 @@ details.section summary h2{display:inline}
 details.section summary::before{content:"▶ ";font-size:14px;color:#6b7280}
 details.section[open] summary::before{content:"▼ "}
 img.page-thumb{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid #d1d5db;border-radius:6px}
+.thumb-compare{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
+.thumb-compare .thumb-col{flex:1 1 260px;min-width:0}
+.thumb-compare .thumb-col p{margin:0 0 6px 0}
+.thumb-compare img.page-thumb{margin:0}
 """ + LANG_TOGGLE_STYLE + """
 </style>
 </head>
