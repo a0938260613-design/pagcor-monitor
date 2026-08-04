@@ -729,6 +729,7 @@ def short_text(text: str, limit: int = 260) -> str:
 
 NUMBERED_ROW_SPLIT_RE = re.compile(r"(?=\b\d{1,4}\.\s)")
 LEADING_NUMBER_RE = re.compile(r"^\d{1,4}\.\s*")
+VERSION_FIELD_RE = re.compile(r"(-\s*)(\d+(?:\.\d+)*)(\s)")
 
 
 def split_numbered_rows(text: str) -> list[str]:
@@ -744,6 +745,23 @@ def split_numbered_rows(text: str) -> list[str]:
     return parts
 
 
+def normalize_row_identity(text: str) -> str:
+    """Collapse cosmetic version-number formatting ("1.0" vs "1", "2.30.0" vs
+    "2.30") in a row's "- VERSION TYPE" field before comparing rows for
+    equality. PAGCOR republishes these game lists with the version column
+    reformatted (trailing ".0" segments dropped) even when the row itself
+    didn't change, which would otherwise make every such row look edited."""
+
+    def strip_trailing_zeros(match: re.Match) -> str:
+        prefix, version, suffix = match.groups()
+        parts = version.split(".")
+        while len(parts) > 1 and parts[-1] == "0":
+            parts.pop()
+        return f"{prefix}{'.'.join(parts)}{suffix}"
+
+    return VERSION_FIELD_RE.sub(strip_trailing_zeros, text)
+
+
 def diff_text_snippets(old_text: str, new_text: str, limit: int = 4) -> tuple[list[str], list[str]]:
     old_text, new_text = normalize_text(old_text), normalize_text(new_text)
     old_rows, new_rows = split_numbered_rows(old_text), split_numbered_rows(new_text)
@@ -754,8 +772,8 @@ def diff_text_snippets(old_text: str, new_text: str, limit: int = 4) -> tuple[li
         # Diffing row-by-row with the leading number stripped for comparison
         # (numbers are position, not identity) surfaces just the rows that
         # actually differ, each as its own short readable line.
-        old_ids = [LEADING_NUMBER_RE.sub("", r) for r in old_rows]
-        new_ids = [LEADING_NUMBER_RE.sub("", r) for r in new_rows]
+        old_ids = [normalize_row_identity(LEADING_NUMBER_RE.sub("", r)) for r in old_rows]
+        new_ids = [normalize_row_identity(LEADING_NUMBER_RE.sub("", r)) for r in new_rows]
         matcher = difflib.SequenceMatcher(None, old_ids, new_ids, autojunk=False)
         added: list[str] = []
         removed: list[str] = []
