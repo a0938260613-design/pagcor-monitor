@@ -277,11 +277,56 @@ def extract_pdf_text(path: Path) -> str:
     return normalize_text("\n".join(block.get("text", "") for block in extract_pdf_pages(path)))
 
 
-def render_pdf_page_thumbnail(pdf_path: Path, page_number: int, max_width_px: int = THUMBNAIL_MAX_WIDTH_PX) -> str | None:
+def pdf_search_needle(text: str) -> str:
+    """Clean a diff snippet into something more likely to exact-match via
+    PyMuPDF's search_for, which needs a literal substring of the page's text
+    layer (truncation ellipses and our own "+N more" notes never appear
+    verbatim in the PDF, so they'd never match)."""
+    text = text.strip()
+    if not text or text.startswith("...") or text.startswith("(+"):
+        return ""
+    if text.endswith("..."):
+        text = text[:-3].strip()
+    return text
+
+
+def find_highlight_rects(page, text: str) -> list:
+    """Locate a diff snippet on the rendered page. Falls back to shorter
+    prefixes of the same snippet, since long snippets are more likely to
+    diverge from the PDF's literal text layer (line wraps, extra spacing)."""
+    needle = pdf_search_needle(text)
+    if not needle:
+        return []
+    rects = page.search_for(needle)
+    if rects:
+        return rects
+    words = needle.split()
+    for n in (8, 5, 3):
+        if len(words) > n:
+            rects = page.search_for(" ".join(words[:n]))
+            if rects:
+                return rects
+    return []
+
+
+REMOVED_HIGHLIGHT_COLOR = (0.86, 0.15, 0.15)  # red - matches the caption/legend text shown next to "before" thumbnails
+ADDED_HIGHLIGHT_COLOR = (0.13, 0.55, 0.13)  # green - matches the caption/legend text shown next to "after" thumbnails
+
+
+def render_pdf_page_thumbnail(
+    pdf_path: Path,
+    page_number: int,
+    highlight_texts: list[str] | None = None,
+    highlight_color: tuple[float, float, float] = REMOVED_HIGHLIGHT_COLOR,
+    max_width_px: int = THUMBNAIL_MAX_WIDTH_PX,
+) -> str | None:
     """Render one PDF page to a base64 PNG data URI, for embedding directly in
     the HTML report so a reader can see the changed page without opening the
-    file. Returns None (not raised) on any failure - missing library, missing
-    file, out-of-range page - so a thumbnail miss never breaks report generation."""
+    file. When highlight_texts is given, draws a highlight_color box around
+    each snippet found on the page, so the reader doesn't have to spot the
+    difference between two full-page screenshots themselves. Returns None
+    (not raised) on any failure - missing library, missing file, out-of-range
+    page - so a thumbnail miss never breaks report generation."""
     if fitz is None or not pdf_path.exists():
         return None
     try:
@@ -289,6 +334,10 @@ def render_pdf_page_thumbnail(pdf_path: Path, page_number: int, max_width_px: in
             if page_number < 1 or page_number > len(doc):
                 return None
             page = doc[page_number - 1]
+            for text in highlight_texts or []:
+                for rect in find_highlight_rects(page, text):
+                    padded = fitz.Rect(rect.x0 - 2, rect.y0 - 2, rect.x1 + 2, rect.y1 + 2)
+                    page.draw_rect(padded, color=highlight_color, width=2, overlay=True)
             zoom = max_width_px / page.rect.width if page.rect.width else 1.0
             pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
             png_bytes = pixmap.tobytes("png")
@@ -756,7 +805,10 @@ def preview_block_text(text: str, limit: int = 4) -> list[str]:
         return [short_text(text)]
     shown = [short_text(r) for r in rows[:limit]]
     if len(rows) > limit:
-        shown.append(f"...另有 {len(rows) - limit} 項")
+        # Kept language-neutral (not translated zh/en) since this string is
+        # inserted verbatim as one of the "added"/"removed" quoted-content
+        # items, which render identically on both language sides.
+        shown.append(f"... (+{len(rows) - limit} more)")
     return shown
 
 
@@ -769,13 +821,13 @@ def summarize_text_block_changes(old_blocks: list[dict], new_blocks: list[dict],
 
     for label in sorted(set(new_by_label) - set(old_by_label)):
         block = new_by_label[label]
-        details.append({"label": label, "type": "頁面開頭", "added": [short_text(block.get("text", ""))], "removed": []})
+        details.append({"label": label, "type": "頁面開頭", "added": preview_block_text(block.get("text", "")), "removed": []})
         if len(details) >= limit:
             return details
 
     for label in sorted(set(old_by_label) - set(new_by_label)):
         block = old_by_label[label]
-        details.append({"label": label, "type": "頁面開頭", "added": [], "removed": [short_text(block.get("text", ""))]})
+        details.append({"label": label, "type": "頁面開頭", "added": [], "removed": preview_block_text(block.get("text", ""))})
         if len(details) >= limit:
             return details
 
@@ -1150,14 +1202,30 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
                     page_number = int(page_match.group(1))
                     old_local_path = change.get("old_local_path")
                     if old_local_path and snapshot.local_path:
-                        old_thumb = render_pdf_page_thumbnail(ROOT / old_local_path, page_number)
+                        old_thumb = render_pdf_page_thumbnail(
+                            ROOT / old_local_path, page_number,
+                            highlight_texts=detail.get("removed"), highlight_color=REMOVED_HIGHLIGHT_COLOR,
+                        )
                         if old_thumb:
-                            alt = f"第 {page_number} 頁－修改前縮圖 / Page {page_number} - before"
+                            # Visible caption, not just alt/title (which most readers never see) -
+                            # states which image this is (before/after) and what the box color means.
+                            lines.append((
+                                f"🔴 第 {page_number} 頁－修改前：紅框標示即將被移除的內容",
+                                f"🔴 Page {page_number} - Before: red box marks content that was removed",
+                            ))
+                            alt = f"Page {page_number} - before"
                             lines.append((f"![{alt}]({old_thumb})", f"![{alt}]({old_thumb})"))
                     if snapshot.local_path:
-                        new_thumb = render_pdf_page_thumbnail(ROOT / snapshot.local_path, page_number)
+                        new_thumb = render_pdf_page_thumbnail(
+                            ROOT / snapshot.local_path, page_number,
+                            highlight_texts=detail.get("added"), highlight_color=ADDED_HIGHLIGHT_COLOR,
+                        )
                         if new_thumb:
-                            alt = f"第 {page_number} 頁－修改後縮圖 / Page {page_number} - after"
+                            lines.append((
+                                f"🟢 第 {page_number} 頁－修改後：綠框標示新增的內容",
+                                f"🟢 Page {page_number} - After: green box marks newly added content",
+                            ))
+                            alt = f"Page {page_number} - after"
                             lines.append((f"![{alt}]({new_thumb})", f"![{alt}]({new_thumb})"))
         else:
             lines.append((
