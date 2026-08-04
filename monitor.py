@@ -678,12 +678,58 @@ def short_text(text: str, limit: int = 260) -> str:
     return text[:limit].rstrip() + "..."
 
 
+NUMBERED_ROW_SPLIT_RE = re.compile(r"(?=\b\d{1,4}\.\s)")
+LEADING_NUMBER_RE = re.compile(r"^\d{1,4}\.\s*")
+
+
+def split_numbered_rows(text: str) -> list[str]:
+    """Split text into rows at numbered-list boundaries ("217. eCASINO GAMES
+    ..."). Returns [] if the text doesn't actually look like a numbered list,
+    so callers can fall back to plain word-level handling."""
+    parts = [p.strip() for p in NUMBERED_ROW_SPLIT_RE.split(text) if p.strip()]
+    if len(parts) < 3:
+        return []
+    numbered = sum(1 for p in parts if LEADING_NUMBER_RE.match(p))
+    if numbered < len(parts) * 0.6:
+        return []
+    return parts
+
+
 def diff_text_snippets(old_text: str, new_text: str, limit: int = 4) -> tuple[list[str], list[str]]:
-    old_words = normalize_text(old_text).split()
-    new_words = normalize_text(new_text).split()
+    old_text, new_text = normalize_text(old_text), normalize_text(new_text)
+    old_rows, new_rows = split_numbered_rows(old_text), split_numbered_rows(new_text)
+    if old_rows and new_rows:
+        # Numbered list (game lists, fee schedules, etc.): a single insertion
+        # shifts every later row's number, which a word-level diff sees as
+        # "everything after this point changed" - one giant unreadable blob.
+        # Diffing row-by-row with the leading number stripped for comparison
+        # (numbers are position, not identity) surfaces just the rows that
+        # actually differ, each as its own short readable line.
+        old_ids = [LEADING_NUMBER_RE.sub("", r) for r in old_rows]
+        new_ids = [LEADING_NUMBER_RE.sub("", r) for r in new_rows]
+        matcher = difflib.SequenceMatcher(None, old_ids, new_ids, autojunk=False)
+        added: list[str] = []
+        removed: list[str] = []
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                continue
+            if tag in {"replace", "delete"}:
+                for row in old_rows[i1:i2]:
+                    if len(removed) < limit:
+                        removed.append(short_text(row))
+            if tag in {"replace", "insert"}:
+                for row in new_rows[j1:j2]:
+                    if len(added) < limit:
+                        added.append(short_text(row))
+            if len(added) >= limit and len(removed) >= limit:
+                break
+        return added, removed
+
+    old_words = old_text.split()
+    new_words = new_text.split()
     matcher = difflib.SequenceMatcher(None, old_words, new_words, autojunk=False)
-    added: list[str] = []
-    removed: list[str] = []
+    added = []
+    removed = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
@@ -698,6 +744,20 @@ def diff_text_snippets(old_text: str, new_text: str, limit: int = 4) -> tuple[li
         if len(added) >= limit and len(removed) >= limit:
             break
     return added, removed
+
+
+def preview_block_text(text: str, limit: int = 4) -> list[str]:
+    """Preview lines for a whole new/removed block. Numbered lists show their
+    first few rows individually (plus a "+N more" note) instead of one giant
+    truncated run-on blob of the entire page."""
+    text = normalize_text(text)
+    rows = split_numbered_rows(text)
+    if not rows:
+        return [short_text(text)]
+    shown = [short_text(r) for r in rows[:limit]]
+    if len(rows) > limit:
+        shown.append(f"...另有 {len(rows) - limit} 項")
+    return shown
 
 
 def summarize_text_block_changes(old_blocks: list[dict], new_blocks: list[dict], limit: int = 8) -> list[dict]:
