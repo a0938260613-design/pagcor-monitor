@@ -72,6 +72,7 @@ REGULATORY_ENTITY_RE = re.compile(
 )
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 PAGE_LABEL_RE = re.compile(r"^第 (\d+) 頁$")
+SEVERITY_BADGE_RE = re.compile(r"^(\d+\.\s+)\[(Critical|High|Medium|Low)\]\s*(.*)$")
 THUMBNAIL_MAX_WIDTH_PX = 700
 MARKDOWN_IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\((.+)\)$")
 
@@ -1012,12 +1013,12 @@ def format_list(items: list[str], limit: int = 12, lang: str = "zh") -> str:
 
 def change_label(change_type: str) -> tuple[str, str]:
     return {
-        "added": ("新增資源", "New resource"),
-        "removed": ("移除資源", "Removed resource"),
-        "resurfaced": ("重新確認（近期曾消失）", "Reconfirmed (briefly missing recently)"),
-        "content_changed": ("內容更新", "Content updated"),
-        "links_changed": ("連結清單更新", "Link list updated"),
-        "fetch_failed": ("抓取失敗", "Fetch failed"),
+        "added": ("🆕 新增資源", "🆕 New resource"),
+        "removed": ("🗑️ 移除資源", "🗑️ Removed resource"),
+        "resurfaced": ("♻️ 重新確認（近期曾消失）", "♻️ Reconfirmed (briefly missing recently)"),
+        "content_changed": ("📝 內容更新", "📝 Content updated"),
+        "links_changed": ("🔗 連結清單更新", "🔗 Link list updated"),
+        "fetch_failed": ("⚠️ 抓取失敗", "⚠️ Fetch failed"),
     }.get(change_type, (change_type, change_type))
 
 
@@ -1032,15 +1033,19 @@ def format_bytes(size: int) -> str:
 def plain_change_summary(change: dict) -> tuple[str, str]:
     change_type = change["type"]
     if change_type == "added":
-        base_zh, base_en = "這是本次第一次被監控到的新資源。", "This is the first time this resource has been monitored. "
+        kind_zh, kind_en = resource_kind_label(change["snapshot"].kind)
+        noun_zh = kind_zh if change["snapshot"].kind == "html" else f"{kind_zh} 檔案"
+        base_zh, base_en = f"這是本次第一次監控到的新{noun_zh}。", f"This is the first time this {kind_en} has been monitored. "
         excerpt = first_excerpt(change["snapshot"])
         if excerpt:
             return f"{base_zh}內容開頭：{excerpt}", f"{base_en}Content starts with: {excerpt}"
         return f"{base_zh}請確認它是否為新的公告、表單、名單或統計資料。", \
             f"{base_en}Please confirm whether this is a new announcement, form, list, or statistical report."
     if change_type == "removed":
-        base_zh = "這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。"
-        base_en = "This resource is no longer reachable. It may have been officially removed, renamed, moved, or its source link deleted."
+        kind_zh, kind_en = resource_kind_label(change["snapshot"].kind)
+        noun_zh = kind_zh if change["snapshot"].kind == "html" else f"{kind_zh} 檔案"
+        base_zh = f"這個{noun_zh}本次已經連不到了，可能是被下架、改名、搬移，或來源頁的連結被移除。"
+        base_en = f"This {kind_en} is no longer reachable. It may have been taken down, renamed, moved, or its source link removed."
         excerpt = first_excerpt(change["snapshot"])
         if excerpt:
             return f"{base_zh}移除前的內容開頭：{excerpt}", f"{base_en} Content before removal started with: {excerpt}"
@@ -1094,17 +1099,25 @@ def plain_change_summary(change: dict) -> tuple[str, str]:
 COMPACT_CHANGE_TYPES = {"added", "removed", "resurfaced", "fetch_failed"}
 
 DOCUMENT_KIND_LABELS = {"pdf": ("PDF", "PDF"), "excel": ("Excel", "Excel"), "document": ("Word/文件", "Word document"), "csv": ("CSV", "CSV")}
+KIND_ICONS = {"pdf": "📄", "excel": "📊", "document": "📃", "csv": "📃"}
+
+
+def resource_kind_label(kind: str) -> tuple[str, str]:
+    if kind == "html":
+        return "網頁", "webpage"
+    return DOCUMENT_KIND_LABELS.get(kind, (kind, kind))
 
 
 def data_location_label(snapshot: ResourceSnapshot) -> tuple[str, str]:
     """Plain-language answer to "where would I actually see this change?" -
     the HTML page itself, or a file the reader has to open separately."""
     if snapshot.kind == "html":
-        return "前端網頁 — 瀏覽器打開網址就看得到", "Front-end webpage - visible directly by opening the URL in a browser"
-    kind_zh, kind_en = DOCUMENT_KIND_LABELS.get(snapshot.kind, (snapshot.kind, snapshot.kind))
+        return "🌐 前端網頁 — 瀏覽器打開網址就看得到", "🌐 Front-end webpage - visible directly by opening the URL in a browser"
+    kind_zh, kind_en = resource_kind_label(snapshot.kind)
+    icon = KIND_ICONS.get(snapshot.kind, "📁")
     return (
-        f"後端文件（{kind_zh}）— 需點開檔案才看得到最新內容",
-        f"Back-end file ({kind_en}) - must open the file to see the latest content",
+        f"{icon} 後端文件（{kind_zh}）— 需點開檔案才看得到最新內容",
+        f"{icon} Back-end file ({kind_en}) - must open the file to see the latest content",
     )
 
 
@@ -1122,6 +1135,43 @@ def location_summary(change: dict, limit: int = 3) -> tuple[str, str]:
         return f"（共 {len(labels)} 處異動：{shown}）", f" ({len(labels)} location(s) changed: {shown})"
     shown = "、".join(labels[:limit])
     return f"（共 {len(labels)} 處異動，含 {shown} 等）", f" ({len(labels)} location(s) changed, including {shown}, etc.)"
+
+
+def split_link_prefix_name(text: str) -> tuple[str, str]:
+    """Split "ROASD Form 1645 - Remittance Form" into ("ROASD Form 1645", "Remittance
+    Form"). Used to detect same-form renames (department/code prefix changed, form name
+    unchanged) between added and removed link lists."""
+    if " - " in text:
+        prefix, _, name = text.partition(" - ")
+        return prefix.strip(), name.strip()
+    return text.strip(), ""
+
+
+def pair_renamed_links(added: list[str], removed: list[str]) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+    """Match added/removed link texts sharing the same trailing name (after " - ") but a
+    different leading code/prefix - almost always the same document re-filed under a new
+    department code, not an unrelated addition plus removal (PAGCOR reorganizes forms
+    under new department prefixes, e.g. OGLD -> ROASD, fairly often). Returns (renamed
+    pairs, remaining genuinely-added, remaining genuinely-removed)."""
+    removed_by_name: dict[str, list[str]] = {}
+    for item in removed:
+        _, name = split_link_prefix_name(item)
+        if name:
+            removed_by_name.setdefault(name, []).append(item)
+    renamed: list[tuple[str, str]] = []
+    remaining_added: list[str] = []
+    used_removed: set[str] = set()
+    for item in added:
+        _, name = split_link_prefix_name(item)
+        candidates = [c for c in removed_by_name.get(name, []) if c not in used_removed] if name else []
+        if candidates:
+            old_item = candidates[0]
+            used_removed.add(old_item)
+            renamed.append((old_item, item))
+        else:
+            remaining_added.append(item)
+    remaining_removed = [item for item in removed if item not in used_removed]
+    return renamed, remaining_added, remaining_removed
 
 
 def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_details: bool = True) -> None:
@@ -1147,12 +1197,11 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
             detail_zh = f"{detail_zh}（錯誤：{error}）"
             detail_en = f"{detail_en} (Error: {error})"
         if is_cosmetic:
-            label_zh, label_en = "技術性更新（內容未變）", "Technical update (content unchanged)"
+            label_zh, label_en = "🔧 技術性更新（內容未變）", "🔧 Technical update (content unchanged)"
         lines += [
             (f"### {idx}. [{change['severity']}] {label_zh}：{title}", f"### {idx}. [{change['severity']}] {label_en}: {title}"),
             ("", ""),
             (f"- {detail_zh}", f"- {detail_en}"),
-            (f"- 資料位置：{loc_zh}", f"- Where to find it: {loc_en}"),
         ]
         if change.get("severity_reason"):
             reason_zh, reason_en = change["severity_reason"]
@@ -1165,44 +1214,40 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
     impact_zh, impact_en = change["impact"]
     loc_summary_zh, loc_summary_en = location_summary(change)
     lines += [
-        (f"### {idx}. [{change['severity']}] {title}{loc_summary_zh}", f"### {idx}. [{change['severity']}] {title}{loc_summary_en}"),
+        (f"### {idx}. [{change['severity']}] {label_zh}：{title}{loc_summary_zh}", f"### {idx}. [{change['severity']}] {label_en}: {title}{loc_summary_en}"),
         ("", ""),
-        (f"- 變動：{label_zh}", f"- Change: {label_en}"),
-        (f"- 實際狀況：{summary_zh}", f"- Details: {summary_en}"),
-        (f"- 來源：{snapshot.url}", f"- Source: {snapshot.url}"),
+        (f"- {summary_zh}", f"- {summary_en}"),
         (f"- 資料位置：{loc_zh}", f"- Where to find it: {loc_en}"),
         (f"- 可能影響：{impact_zh}", f"- Possible impact: {impact_en}"),
     ]
     if change.get("severity_reason"):
         reason_zh, reason_en = change["severity_reason"]
         lines.append((f"- 分類依據：內容涉及「{reason_zh}」", f'- Classification basis: involves "{reason_en}"'))
+    lines.append((f"- 來源：{snapshot.url}", f"- Source: {snapshot.url}"))
     if change["type"] == "content_changed":
-        old_size, new_size, size_delta = change.get("old_size", 0), change.get("new_size", 0), change.get("size_delta", 0)
-        lines.append((
-            f"- 檔案大小：原本 {format_bytes(old_size)}，現在 {format_bytes(new_size)}，差異 {size_delta:+,} bytes",
-            f"- File size: was {format_bytes(old_size)}, now {format_bytes(new_size)}, change {size_delta:+,} bytes",
-        ))
-        binary_state_zh = "檔案本身有更新" if change.get("binary_changed") else "檔案本身沒有變化"
-        binary_state_en = "File itself updated" if change.get("binary_changed") else "File itself unchanged"
-        text_state_zh = "文字內容有變化" if change.get("text_changed") else "文字內容沒有變化"
-        text_state_en = "text content changed" if change.get("text_changed") else "text content unchanged"
-        lines.append((f"- 檔案狀態：{binary_state_zh}；{text_state_zh}", f"- File status: {binary_state_en}; {text_state_en}"))
+        if include_details:
+            old_size, new_size, size_delta = change.get("old_size", 0), change.get("new_size", 0), change.get("size_delta", 0)
+            lines.append((
+                f"- 檔案大小：原本 {format_bytes(old_size)}，現在 {format_bytes(new_size)}，差異 {size_delta:+,} bytes",
+                f"- File size: was {format_bytes(old_size)}, now {format_bytes(new_size)}, change {size_delta:+,} bytes",
+            ))
+            binary_state_zh = "檔案本身有更新" if change.get("binary_changed") else "檔案本身沒有變化"
+            binary_state_en = "File itself updated" if change.get("binary_changed") else "File itself unchanged"
+            text_state_zh = "文字內容有變化" if change.get("text_changed") else "文字內容沒有變化"
+            text_state_en = "text content changed" if change.get("text_changed") else "text content unchanged"
+            lines.append((f"- 檔案狀態：{binary_state_zh}；{text_state_zh}", f"- File status: {binary_state_en}; {text_state_en}"))
         if change.get("added_dates") or change.get("removed_dates"):
             added_d, removed_d = change.get("added_dates", []), change.get("removed_dates", [])
             lines.append((
                 f"- 日期變動：新增 {format_list(added_d)}；移除 {format_list(removed_d)}",
                 f"- Date changes: added {format_list(added_d, lang='en')}; removed {format_list(removed_d, lang='en')}",
             ))
-        else:
-            lines.append(("- 日期變動：未偵測到新增或移除的日期文字", "- Date changes: no added or removed dates detected"))
         if change.get("added_domains") or change.get("removed_domains"):
             added_dom, removed_dom = change.get("added_domains", []), change.get("removed_domains", [])
             lines.append((
                 f"- 網域變動：新增 {format_list(added_dom)}；移除 {format_list(removed_dom)}",
                 f"- Domain changes: added {format_list(added_dom, lang='en')}; removed {format_list(removed_dom, lang='en')}",
             ))
-        else:
-            lines.append(("- 網域變動：未偵測到新增或移除的網域文字", "- Domain changes: no added or removed domains detected"))
         detail_changes = change.get("detail_changes", [])
         if detail_changes:
             lines.append(("- 變動位置與文字片段：", "- Change locations and text snippets:"))
@@ -1257,15 +1302,27 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
                 "- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。",
                 "- Change locations and text snippets: no page/section-level text in the current baseline, or this file's text couldn't be extracted; a detailed baseline has now been established so future changes will show their location.",
             ))
-        lines.append((
-            "- 判讀方式：如果只有檔案大小改變、但文字內容沒變，很可能只是官方重新輸出或壓縮同一份文件，不一定代表內容有實質修改；仍建議打開來源確認版面與內容。",
-            "- How to read this: if only the file size changed but the text content didn't, it's likely just an official re-export or re-compression of the same document, not necessarily a substantive change; still recommended to open the source to confirm layout and content.",
-        ))
+        if include_details:
+            lines.append((
+                "- 判讀方式：如果只有檔案大小改變、但文字內容沒變，很可能只是官方重新輸出或壓縮同一份文件，不一定代表內容有實質修改；仍建議打開來源確認版面與內容。",
+                "- How to read this: if only the file size changed but the text content didn't, it's likely just an official re-export or re-compression of the same document, not necessarily a substantive change; still recommended to open the source to confirm layout and content.",
+            ))
     if change["type"] == "links_changed" and include_details:
         added = [item["text"] or item["url"] for item in change.get("added_links", [])]
         removed = [item["text"] or item["url"] for item in change.get("removed_links", [])]
-        lines.append((f"- 新增連結：{format_list(added)}", f"- Links added: {format_list(added, lang='en')}"))
-        lines.append((f"- 移除連結：{format_list(removed)}", f"- Links removed: {format_list(removed, lang='en')}"))
+        renamed, added, removed = pair_renamed_links(added, removed)
+        if renamed:
+            lines.append(("- 可能改名／代碼異動（表單名稱相同，前綴不同，非真正新增或移除）：", "- Possibly renamed (same form name, different code prefix - not a real addition or removal):"))
+            for old_item, new_item in renamed:
+                lines.append((f"  - {old_item} → {new_item}", f"  - {old_item} → {new_item}"))
+        if added:
+            lines.append(("- 新增連結：", "- Links added:"))
+            for item in added:
+                lines.append((f"  - {item}", f"  - {item}"))
+        if removed:
+            lines.append(("- 移除連結：", "- Links removed:"))
+            for item in removed:
+                lines.append((f"  - {item}", f"  - {item}"))
     lines.append(("", ""))
 
 
@@ -1499,7 +1556,16 @@ def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
                 body_lines.append(f'<h2 id="{sec_id}">{dual_span(heading_zh, heading_en)}</h2>')
         elif zh.startswith("### "):
             close_item()
-            body_lines.append(f'<details class="item"><summary>{dual_span(zh[4:], en[4:])}</summary>')
+            header_zh, header_en = zh[4:], en[4:]
+            match_zh, match_en = SEVERITY_BADGE_RE.match(header_zh), SEVERITY_BADGE_RE.match(header_en)
+            if match_zh and match_en:
+                idx_prefix, severity, rest_zh = match_zh.groups()
+                _, _, rest_en = match_en.groups()
+                badge = f'<span class="sev-badge sev-{severity.lower()}">{severity}</span>'
+                summary = f'{html.escape(idx_prefix)}{badge} {dual_span(rest_zh, rest_en)}'
+            else:
+                summary = dual_span(header_zh, header_en)
+            body_lines.append(f'<details class="item"><summary>{summary}</summary>')
             item_open = True
         elif zh.startswith("- "):
             if not in_list:
@@ -1537,6 +1603,11 @@ nav.quicknav{position:sticky;top:0;background:#f8fafc;padding:10px 0;margin-bott
 nav.quicknav a{color:#1d4ed8;text-decoration:none;margin-right:4px}nav.quicknav a:hover{text-decoration:underline}
 details.item{background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px;padding:4px 14px}
 details.item summary{cursor:pointer;font-weight:600;padding:8px 0;list-style:revert}
+.sev-badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#fff;vertical-align:1px}
+.sev-critical{background:#dc2626}
+.sev-high{background:#ea580c}
+.sev-medium{background:#ca8a04}
+.sev-low{background:#6b7280}
 details.item[open] summary{border-bottom:1px solid #e5e7eb;margin-bottom:8px}
 details.section summary{cursor:pointer;list-style:none}
 details.section summary h2{display:inline}

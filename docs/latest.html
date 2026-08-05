@@ -18,6 +18,11 @@ nav.quicknav{position:sticky;top:0;background:#f8fafc;padding:10px 0;margin-bott
 nav.quicknav a{color:#1d4ed8;text-decoration:none;margin-right:4px}nav.quicknav a:hover{text-decoration:underline}
 details.item{background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px;padding:4px 14px}
 details.item summary{cursor:pointer;font-weight:600;padding:8px 0;list-style:revert}
+.sev-badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#fff;vertical-align:1px}
+.sev-critical{background:#dc2626}
+.sev-high{background:#ea580c}
+.sev-medium{background:#ca8a04}
+.sev-low{background:#6b7280}
 details.item[open] summary{border-bottom:1px solid #e5e7eb;margin-bottom:8px}
 details.section summary{cursor:pointer;list-style:none}
 details.section summary h2{display:inline}
@@ -39,117 +44,10 @@ img.page-thumb{display:block;max-width:100%;height:auto;margin:8px 0;border:1px 
 </head>
 <body>
 <h1><span class="lang-zh">PAGCOR Regulatory Daily Monitor</span><span class="lang-en">PAGCOR Regulatory Daily Monitor</span></h1>
-<nav class="quicknav"><a href="https://a0938260613-design.github.io/pagcor-monitor/history.html">📜 <span class="lang-zh">歷史紀錄</span><span class="lang-en">History</span></a> · <a href="#sec-0"><span class="lang-zh">需要優先閱讀</span><span class="lang-en">Priority Review</span> (5)</a> · <a href="#sec-1"><span class="lang-zh">低風險留痕</span><span class="lang-en">Low-Risk Log</span> (6)</a> · <a href="#sec-2"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></a> · <button id="lang-toggle" type="button">EN</button></nav>
-<h2 id="sec-0"><span class="lang-zh">需要優先閱讀</span><span class="lang-en">Priority Review</span></h2>
-<p><span class="lang-zh">建議：以下項目請優先人工複核來源文件。</span><span class="lang-en">Recommendation: please prioritize manual review of the source documents for the items below.</span></p>
-<details class="item"><summary><span class="lang-zh">1. [Critical] 移除資源：List of Accredited Gaming Laboratory</span><span class="lang-en">1. [Critical] Removed resource: List of Accredited Gaming Laboratory</span></summary>
-<ul>
-<li><span class="lang-zh">這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。</span><span class="lang-en">This resource is no longer reachable. It may have been officially removed, renamed, moved, or its source link deleted.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">分類依據：內容涉及「認可資格」</span><span class="lang-en">Classification basis: involves &quot;Accreditation&quot;</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/List-of-Accredited-Gaming-Laboratory-.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/List-of-Accredited-Gaming-Laboratory-.pdf</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">2. [Critical] 新增資源：List of Cancelled Philippine Offshore Gaming Operators and Service Providers Old Framework</span><span class="lang-en">2. [Critical] New resource: List of Cancelled Philippine Offshore Gaming Operators and Service Providers Old Framework</span></summary>
-<ul>
-<li><span class="lang-zh">這是本次第一次被監控到的新資源。請確認它是否為新的公告、表單、名單或統計資料。</span><span class="lang-en">This is the first time this resource has been monitored. Please confirm whether this is a new announcement, form, list, or statistical report.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">分類依據：內容涉及「業者資格被取消」</span><span class="lang-en">Classification basis: involves &quot;Operator eligibility cancelled&quot;</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/List-of-Cancelled-Philippine-Offshore-Gaming-Operators-and-Service-Providers-Old-Framework.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/List-of-Cancelled-Philippine-Offshore-Gaming-Operators-and-Service-Providers-Old-Framework.pdf</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">3. [Critical] Remote Operations and Ancillary Services</span><span class="lang-en">3. [Critical] Remote Operations and Ancillary Services</span></summary>
-<ul>
-<li><span class="lang-zh">變動：連結清單更新</span><span class="lang-en">Change: Link list updated</span></li>
-<li><span class="lang-zh">實際狀況：來源頁面的連結清單改變：新增 1 個連結、移除 3 個連結。</span><span class="lang-en">Details: The link list on the source page changed: 1 link(s) added, 3 link(s) removed.</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span></li>
-<li><span class="lang-zh">資料位置：前端網頁 — 瀏覽器打開網址就看得到</span><span class="lang-en">Where to find it: Front-end webpage - visible directly by opening the URL in a browser</span></li>
-<li><span class="lang-zh">可能影響：可能涉及業者資格取消或市場准入狀態變化，需優先人工複核。</span><span class="lang-en">Possible impact: May involve an operator&#x27;s eligibility being cancelled or a change in market-access status - prioritize manual review.</span></li>
-<li><span class="lang-zh">分類依據：內容涉及「業者資格被取消」</span><span class="lang-en">Classification basis: involves &quot;Operator eligibility cancelled&quot;</span></li>
-<li><span class="lang-zh">新增連結：List of Cancelled Philippine Offshore Gaming Operators and Service Providers - Old Framework</span><span class="lang-en">Links added: List of Cancelled Philippine Offshore Gaming Operators and Service Providers - Old Framework</span></li>
-<li><span class="lang-zh">移除連結：List of Accredited Independent Testing Laboratories、List of Cancelled Philippine Offshore Gaming Operator - Old Framework、List of Cancelled Service Providers - Old Framework</span><span class="lang-en">Links removed: List of Accredited Independent Testing Laboratories、List of Cancelled Philippine Offshore Gaming Operator - Old Framework、List of Cancelled Service Providers - Old Framework</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">4. [Critical] 移除資源：list of cancelled philippine offshore gaming operator old framework</span><span class="lang-en">4. [Critical] Removed resource: list of cancelled philippine offshore gaming operator old framework</span></summary>
-<ul>
-<li><span class="lang-zh">這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。</span><span class="lang-en">This resource is no longer reachable. It may have been officially removed, renamed, moved, or its source link deleted.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">分類依據：內容涉及「業者資格被取消」</span><span class="lang-en">Classification basis: involves &quot;Operator eligibility cancelled&quot;</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-philippine-offshore-gaming-operator-old-framework.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-philippine-offshore-gaming-operator-old-framework.pdf</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">5. [Critical] 移除資源：list of cancelled service providers</span><span class="lang-en">5. [Critical] Removed resource: list of cancelled service providers</span></summary>
-<ul>
-<li><span class="lang-zh">這個資源本次已不在可抓取清單中。可能是官方移除、改名、搬移，或來源頁連結被刪除。</span><span class="lang-en">This resource is no longer reachable. It may have been officially removed, renamed, moved, or its source link deleted.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">分類依據：內容涉及「業者資格被取消」</span><span class="lang-en">Classification basis: involves &quot;Operator eligibility cancelled&quot;</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-service-providers.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-service-providers.pdf</span></li>
-</ul>
-</details>
-<details id="sec-1" class="section"><summary><h2><span class="lang-zh">低風險留痕</span><span class="lang-en">Low-Risk Log</span></h2></summary>
-<p><span class="lang-zh">以下為低風險變動，僅留存追溯紀錄，不需要立即處理。</span><span class="lang-en">The items below are low-risk changes, kept only for audit trail - no immediate action needed.</span></p>
-<details class="item"><summary><span class="lang-zh">1. [Low] Remote Operations and Ancillary Services（共 3 處異動：LIST OF LICENSEES/ACCREDITED ENTITIES AS OF AUGUST 4, 2026: List of Special Class of BPOs List of Cancelled Special Clas、LIST OF LICENSEES/ ACCREDITED ENTITIES List of Special Class of BPO List of Accredited Independent Testing Laboratories 、For questions or clarifications, you may contact us at:）</span><span class="lang-en">1. [Low] Remote Operations and Ancillary Services (3 location(s) changed: LIST OF LICENSEES/ACCREDITED ENTITIES AS OF AUGUST 4, 2026: List of Special Class of BPOs List of Cancelled Special Clas、LIST OF LICENSEES/ ACCREDITED ENTITIES List of Special Class of BPO List of Accredited Independent Testing Laboratories 、For questions or clarifications, you may contact us at:)</span></summary>
-<ul>
-<li><span class="lang-zh">變動：內容更新</span><span class="lang-en">Change: Content updated</span></li>
-<li><span class="lang-zh">實際狀況：檔案本身有更新、文字內容有變化、大小增加 394 bytes。</span><span class="lang-en">Details: The file itself was updated, text content changed, size increased by 394 bytes.</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span></li>
-<li><span class="lang-zh">資料位置：前端網頁 — 瀏覽器打開網址就看得到</span><span class="lang-en">Where to find it: Front-end webpage - visible directly by opening the URL in a browser</span></li>
-<li><span class="lang-zh">可能影響：低風險變動，已留痕供追溯。</span><span class="lang-en">Possible impact: Low-risk change, logged for audit trail.</span></li>
-<li><span class="lang-zh">檔案大小：原本 68.0 KB，現在 68.4 KB，差異 +394 bytes</span><span class="lang-en">File size: was 68.0 KB, now 68.4 KB, change +394 bytes</span></li>
-<li><span class="lang-zh">檔案狀態：檔案本身有更新；文字內容有變化</span><span class="lang-en">File status: File itself updated; text content changed</span></li>
-<li><span class="lang-zh">日期變動：未偵測到新增或移除的日期文字</span><span class="lang-en">Date changes: no added or removed dates detected</span></li>
-<li><span class="lang-zh">網域變動：未偵測到新增或移除的網域文字</span><span class="lang-en">Domain changes: no added or removed domains detected</span></li>
-<li><span class="lang-zh">變動位置與文字片段：</span><span class="lang-en">Change locations and text snippets:</span></li>
-</ul>
-<p><span class="lang-zh">  - LIST OF LICENSEES/ACCREDITED ENTITIES AS OF AUGUST 4, 2026: List of Special Class of BPOs List of Cancelled Special Clas：頁面開頭</span><span class="lang-en">  - LIST OF LICENSEES/ACCREDITED ENTITIES AS OF AUGUST 4, 2026: List of Special Class of BPOs List of Cancelled Special Clas: page start</span></p>
-<p><span class="lang-zh">    - 新增：List of Special Class of BPOs List of Cancelled Special Class of BPOs List of Cancelled Remote Play Slot Machine Licensee List of Cancelled Remote Play Poker Licensee List of Cancelled Philippine Offshore Gaming Operators and Service Providers - Old Framework...</span><span class="lang-en">    - Added: List of Special Class of BPOs List of Cancelled Special Class of BPOs List of Cancelled Remote Play Slot Machine Licensee List of Cancelled Remote Play Poker Licensee List of Cancelled Philippine Offshore Gaming Operators and Service Providers - Old Framework...</span></p>
-<p><span class="lang-zh">  - LIST OF LICENSEES/ ACCREDITED ENTITIES List of Special Class of BPO List of Accredited Independent Testing Laboratories ：頁面開頭</span><span class="lang-en">  - LIST OF LICENSEES/ ACCREDITED ENTITIES List of Special Class of BPO List of Accredited Independent Testing Laboratories : page start</span></p>
-<p><span class="lang-zh">    - 移除：List of Special Class of BPO List of Accredited Independent Testing Laboratories List of Cancelled Special Class of BPO List of Cancelled Philippine Offshore Gaming Operator - Old Framework List of Cancelled Licensees, LGA, and APs - New Framework List of Canc...</span><span class="lang-en">    - Removed: List of Special Class of BPO List of Accredited Independent Testing Laboratories List of Cancelled Special Class of BPO List of Cancelled Philippine Offshore Gaming Operator - Old Framework List of Cancelled Licensees, LGA, and APs - New Framework List of Canc...</span></p>
-<p><span class="lang-zh">  - For questions or clarifications, you may contact us at:：頁面開頭</span><span class="lang-en">  - For questions or clarifications, you may contact us at:: page start</span></p>
-<p><span class="lang-zh">    - 新增：Remote Operations and Ancillary Services</span><span class="lang-en">    - Added: Remote Operations and Ancillary Services</span></p>
-<p><span class="lang-zh">    - 新增：(ROASD)</span><span class="lang-en">    - Added: (ROASD)</span></p>
-<p><span class="lang-zh">    - 移除：Offshore Gaming Licensing</span><span class="lang-en">    - Removed: Offshore Gaming Licensing</span></p>
-<ul>
-<li><span class="lang-zh">判讀方式：如果只有檔案大小改變、但文字內容沒變，很可能只是官方重新輸出或壓縮同一份文件，不一定代表內容有實質修改；仍建議打開來源確認版面與內容。</span><span class="lang-en">How to read this: if only the file size changed but the text content didn&#x27;t, it&#x27;s likely just an official re-export or re-compression of the same document, not necessarily a substantive change; still recommended to open the source to confirm layout and content.</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">2. [Low] 技術性更新（內容未變）：list of cancelled licensees LGA ap new framework</span><span class="lang-en">2. [Low] Technical update (content unchanged): list of cancelled licensees LGA ap new framework</span></summary>
-<ul>
-<li><span class="lang-zh">此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。</span><span class="lang-en">This file was regenerated (e.g. re-exported officially or a server-side touch), but the actual text content is unchanged - safe to ignore.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-licensees-LGA-ap-new-framework.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-licensees-LGA-ap-new-framework.pdf</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">3. [Low] 技術性更新（內容未變）：list of cancelled remote play poker licensee</span><span class="lang-en">3. [Low] Technical update (content unchanged): list of cancelled remote play poker licensee</span></summary>
-<ul>
-<li><span class="lang-zh">此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。</span><span class="lang-en">This file was regenerated (e.g. re-exported officially or a server-side touch), but the actual text content is unchanged - safe to ignore.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-remote-play-poker-licensee.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-remote-play-poker-licensee.pdf</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">4. [Low] 技術性更新（內容未變）：list of cancelled remote play slot machine licensee</span><span class="lang-en">4. [Low] Technical update (content unchanged): list of cancelled remote play slot machine licensee</span></summary>
-<ul>
-<li><span class="lang-zh">此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。</span><span class="lang-en">This file was regenerated (e.g. re-exported officially or a server-side touch), but the actual text content is unchanged - safe to ignore.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-remote-play-slot-machine-licensee.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-remote-play-slot-machine-licensee.pdf</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">5. [Low] 技術性更新（內容未變）：list of cancelled special class bpo</span><span class="lang-en">5. [Low] Technical update (content unchanged): list of cancelled special class bpo</span></summary>
-<ul>
-<li><span class="lang-zh">此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。</span><span class="lang-en">This file was regenerated (e.g. re-exported officially or a server-side touch), but the actual text content is unchanged - safe to ignore.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-special-class-bpo.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/list-of-cancelled-special-class-bpo.pdf</span></li>
-</ul>
-</details>
-<details class="item"><summary><span class="lang-zh">6. [Low] 技術性更新（內容未變）：list of special class bpo</span><span class="lang-en">6. [Low] Technical update (content unchanged): list of special class bpo</span></summary>
-<ul>
-<li><span class="lang-zh">此檔案已重新產生（例如官方重新輸出或伺服器端調整），但實際文字內容沒有變化，可忽略。</span><span class="lang-en">This file was regenerated (e.g. re-exported officially or a server-side touch), but the actual text content is unchanged - safe to ignore.</span></li>
-<li><span class="lang-zh">資料位置：後端文件（PDF）— 需點開檔案才看得到最新內容</span><span class="lang-en">Where to find it: Back-end file (PDF) - must open the file to see the latest content</span></li>
-<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/list-of-special-class-bpo.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/list-of-special-class-bpo.pdf</span></li>
-</ul>
-</details>
-</details>
-<h2 id="sec-2"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></h2>
+<nav class="quicknav"><a href="https://a0938260613-design.github.io/pagcor-monitor/history.html">📜 <span class="lang-zh">歷史紀錄</span><span class="lang-en">History</span></a> · <a href="#sec-0"><span class="lang-zh">今日結果</span><span class="lang-en">Result</span></a> · <a href="#sec-1"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></a> · <button id="lang-toggle" type="button">EN</button></nav>
+<h2 id="sec-0"><span class="lang-zh">今日結果</span><span class="lang-en">Result</span></h2>
+<p><span class="lang-zh">未偵測到變動。</span><span class="lang-en">No changes detected.</span></p>
+<h2 id="sec-1"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></h2>
 <ul>
 <li><span class="lang-zh">https://www.pagcor.ph/regulatory/index.html：404 Client Error: Not Found for url: https://www.pagcor.ph/regulatory/index.html</span><span class="lang-en">https://www.pagcor.ph/regulatory/index.html: 404 Client Error: Not Found for url: https://www.pagcor.ph/regulatory/index.html</span></li>
 </ul>

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<script>
+(function(){
+  var saved = localStorage.getItem('pagcor-lang') || 'zh';
+  document.documentElement.setAttribute('data-lang', saved);
+})();
+</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PAGCOR Regulatory Daily Monitor</title>
+<style>
+body{font-family:Arial,'Microsoft JhengHei',sans-serif;line-height:1.6;margin:32px;max-width:1100px;color:#1f2937;background:#f8fafc}
+h1,h2,h3{line-height:1.25;color:#111827}h1{font-size:28px}h2{font-size:22px;margin-top:28px;border-bottom:1px solid #d1d5db;padding-bottom:6px;display:inline-block}h3{font-size:18px;margin-top:22px}
+ul{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px 20px 14px 34px}li{margin:5px 0}p{background:#fff;border-left:4px solid #9ca3af;padding:10px 14px}code{background:#e5e7eb;padding:2px 5px;border-radius:4px}
+nav.quicknav{position:sticky;top:0;background:#f8fafc;padding:10px 0;margin-bottom:8px;border-bottom:1px solid #d1d5db;font-size:14px}
+nav.quicknav a{color:#1d4ed8;text-decoration:none;margin-right:4px}nav.quicknav a:hover{text-decoration:underline}
+details.item{background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px;padding:4px 14px}
+details.item summary{cursor:pointer;font-weight:600;padding:8px 0;list-style:revert}
+.sev-badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#fff;vertical-align:1px}
+.sev-critical{background:#dc2626}
+.sev-high{background:#ea580c}
+.sev-medium{background:#ca8a04}
+.sev-low{background:#6b7280}
+details.item[open] summary{border-bottom:1px solid #e5e7eb;margin-bottom:8px}
+details.section summary{cursor:pointer;list-style:none}
+details.section summary h2{display:inline}
+details.section summary::before{content:"▶ ";font-size:14px;color:#6b7280}
+details.section[open] summary::before{content:"▼ "}
+img.page-thumb{display:block;max-width:100%;height:auto;margin:8px 0;border:1px solid #d1d5db;border-radius:6px}
+.thumb-compare{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
+.thumb-compare .thumb-col{flex:1 1 260px;min-width:0}
+.thumb-compare .thumb-col p{margin:0 0 6px 0}
+.thumb-compare img.page-thumb{margin:0}
+
+.lang-en{display:none}
+:root[data-lang="en"] .lang-en{display:inline}
+:root[data-lang="en"] .lang-zh{display:none}
+#lang-toggle{cursor:pointer;border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:2px 10px;font-size:13px;margin-left:4px}
+#lang-toggle:hover{background:#f1f5f9}
+
+</style>
+</head>
+<body>
+<h1><span class="lang-zh">PAGCOR Regulatory Daily Monitor</span><span class="lang-en">PAGCOR Regulatory Daily Monitor</span></h1>
+<nav class="quicknav"><a href="https://a0938260613-design.github.io/pagcor-monitor/history.html">📜 <span class="lang-zh">歷史紀錄</span><span class="lang-en">History</span></a> · <a href="#sec-0"><span class="lang-zh">例行檢視</span><span class="lang-en">Routine Review</span> (6)</a> · <a href="#sec-1"><span class="lang-zh">低風險留痕</span><span class="lang-en">Low-Risk Log</span> (1)</a> · <a href="#sec-2"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></a> · <button id="lang-toggle" type="button">EN</button></nav>
+<details id="sec-0" class="section"><summary><h2><span class="lang-zh">例行檢視</span><span class="lang-en">Routine Review</span></h2></summary>
+<p><span class="lang-zh">建議：非急迫，排入例行檢視即可。</span><span class="lang-en">Recommendation: not urgent, schedule for routine review.</span></p>
+<details class="item"><summary>1. <span class="sev-badge sev-medium">Medium</span> <span class="lang-zh">🗑️ 移除資源：OG Form 1645 Remittance Form</span><span class="lang-en">🗑️ Removed resource: OG Form 1645 Remittance Form</span></summary>
+<ul>
+<li><span class="lang-zh">這個PDF本次已經連不到了，可能是被下架、改名、搬移，或來源頁的連結被移除。移除前的內容開頭：REMITTANCE FORM Page No. 1 of 1 Form No. ROASD -1645 Revision No. 2 Effectivity June 22, 2026 Reference No. (Refer to the Deposit Notice and...</span><span class="lang-en">This PDF is no longer reachable. It may have been taken down, renamed, moved, or its source link removed. Content before removal started with: REMITTANCE FORM Page No. 1 of 1 Form No. ROASD -1645 Revision No. 2 Effectivity June 22, 2026 Reference No. (Refer to the Deposit Notice and...</span></li>
+<li><span class="lang-zh">分類依據：內容涉及「申請表單」</span><span class="lang-en">Classification basis: involves &quot;Application form&quot;</span></li>
+<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/OG-Form-1645-Remittance-Form.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/OG-Form-1645-Remittance-Form.pdf</span></li>
+</ul>
+</details>
+<details class="item"><summary>2. <span class="sev-badge sev-medium">Medium</span> <span class="lang-zh">🗑️ 移除資源：OGLD Form 1535 Declaration of Security Compliance Officer Form</span><span class="lang-en">🗑️ Removed resource: OGLD Form 1535 Declaration of Security Compliance Officer Form</span></summary>
+<ul>
+<li><span class="lang-zh">這個PDF本次已經連不到了，可能是被下架、改名、搬移，或來源頁的連結被移除。移除前的內容開頭：DECLARATION OF SECURITY COMPLIANCE OFFICER FORM Page No. 1 of 1 Form No. OGLD-1535 Revision No. 3 Effectivity April 23, 2025 PART A: GENERAL...</span><span class="lang-en">This PDF is no longer reachable. It may have been taken down, renamed, moved, or its source link removed. Content before removal started with: DECLARATION OF SECURITY COMPLIANCE OFFICER FORM Page No. 1 of 1 Form No. OGLD-1535 Revision No. 3 Effectivity April 23, 2025 PART A: GENERAL...</span></li>
+<li><span class="lang-zh">分類依據：內容涉及「申請表單」</span><span class="lang-en">Classification basis: involves &quot;Application form&quot;</span></li>
+<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/OGLD-Form-1535-Declaration-of-Security-Compliance-Officer-Form-.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/OGLD-Form-1535-Declaration-of-Security-Compliance-Officer-Form-.pdf</span></li>
+</ul>
+</details>
+<details class="item"><summary>3. <span class="sev-badge sev-medium">Medium</span> <span class="lang-zh">🗑️ 移除資源：OGLD Form 569 Request for Refund of Performance Bond</span><span class="lang-en">🗑️ Removed resource: OGLD Form 569 Request for Refund of Performance Bond</span></summary>
+<ul>
+<li><span class="lang-zh">這個PDF本次已經連不到了，可能是被下架、改名、搬移，或來源頁的連結被移除。移除前的內容開頭：REQUEST FOR REFUND OF PERFORMANCE BOND Page No. 1 of 1 Form No. ROASD – 569 Revision No. 0 Effectivity June 22, 2026 PART A. GENERAL INSTRUC...</span><span class="lang-en">This PDF is no longer reachable. It may have been taken down, renamed, moved, or its source link removed. Content before removal started with: REQUEST FOR REFUND OF PERFORMANCE BOND Page No. 1 of 1 Form No. ROASD – 569 Revision No. 0 Effectivity June 22, 2026 PART A. GENERAL INSTRUC...</span></li>
+<li><span class="lang-zh">分類依據：內容涉及「申請表單」</span><span class="lang-en">Classification basis: involves &quot;Application form&quot;</span></li>
+<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/OGLD-Form-569-Request-for-Refund-of-Performance-Bond.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/OGLD-Form-569-Request-for-Refund-of-Performance-Bond.pdf</span></li>
+</ul>
+</details>
+<details class="item"><summary>4. <span class="sev-badge sev-medium">Medium</span> <span class="lang-zh">🆕 新增資源：ROASD Form 1645 Remittance Form</span><span class="lang-en">🆕 New resource: ROASD Form 1645 Remittance Form</span></summary>
+<ul>
+<li><span class="lang-zh">這是本次第一次監控到的新PDF。內容開頭：REMITTANCE FORM Page No. Page 1 of 1 Form No. ROASD-1645 Revision No. 0 Effectivity Jun. 22, 2026 Reference No. (Refer to the Deposit Notice...</span><span class="lang-en">This is the first time this PDF has been monitored. Content starts with: REMITTANCE FORM Page No. Page 1 of 1 Form No. ROASD-1645 Revision No. 0 Effectivity Jun. 22, 2026 Reference No. (Refer to the Deposit Notice...</span></li>
+<li><span class="lang-zh">分類依據：內容涉及「申請表單」</span><span class="lang-en">Classification basis: involves &quot;Application form&quot;</span></li>
+<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/ROASD-Form-1645-Remittance-Form.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/ROASD-Form-1645-Remittance-Form.pdf</span></li>
+</ul>
+</details>
+<details class="item"><summary>5. <span class="sev-badge sev-medium">Medium</span> <span class="lang-zh">🆕 新增資源：ROASD Form 569 Request for Refund of Performance Bond</span><span class="lang-en">🆕 New resource: ROASD Form 569 Request for Refund of Performance Bond</span></summary>
+<ul>
+<li><span class="lang-zh">這是本次第一次監控到的新PDF。內容開頭：REQUEST FOR REFUND OF PERFROMANCE BOND Page No. Page 1 of 2 Form No. ROASD-569 Revision No. 0 Effectivity Jun. 22, 2026 PART A. GENERAL INST...</span><span class="lang-en">This is the first time this PDF has been monitored. Content starts with: REQUEST FOR REFUND OF PERFROMANCE BOND Page No. Page 1 of 2 Form No. ROASD-569 Revision No. 0 Effectivity Jun. 22, 2026 PART A. GENERAL INST...</span></li>
+<li><span class="lang-zh">分類依據：內容涉及「申請表單」</span><span class="lang-en">Classification basis: involves &quot;Application form&quot;</span></li>
+<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/pdf/offshore/ROASD-Form-569-Request-for-Refund-of-Performance-Bond.pdf</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/pdf/offshore/ROASD-Form-569-Request-for-Refund-of-Performance-Bond.pdf</span></li>
+</ul>
+</details>
+<details class="item"><summary>6. <span class="sev-badge sev-medium">Medium</span> <span class="lang-zh">🔗 連結清單更新：Remote Operations and Ancillary Services</span><span class="lang-en">🔗 Link list updated: Remote Operations and Ancillary Services</span></summary>
+<ul>
+<li><span class="lang-zh">來源頁面的連結清單改變：新增 2 個連結、移除 3 個連結。</span><span class="lang-en">The link list on the source page changed: 2 link(s) added, 3 link(s) removed.</span></li>
+<li><span class="lang-zh">資料位置：🌐 前端網頁 — 瀏覽器打開網址就看得到</span><span class="lang-en">Where to find it: 🌐 Front-end webpage - visible directly by opening the URL in a browser</span></li>
+<li><span class="lang-zh">可能影響：文件或流程資料有變動，建議排入例行檢視。</span><span class="lang-en">Possible impact: Document or process information changed - schedule for routine review.</span></li>
+<li><span class="lang-zh">分類依據：內容涉及「申請表單」</span><span class="lang-en">Classification basis: involves &quot;Application form&quot;</span></li>
+<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span></li>
+<li><span class="lang-zh">新增連結：</span><span class="lang-en">Links added:</span></li>
+</ul>
+<p><span class="lang-zh">  - ROASD Form 1645 - Remittance Form</span><span class="lang-en">  - ROASD Form 1645 - Remittance Form</span></p>
+<p><span class="lang-zh">  - ROASD Form 569 - Request for Refund of Performance Bond</span><span class="lang-en">  - ROASD Form 569 - Request for Refund of Performance Bond</span></p>
+<ul>
+<li><span class="lang-zh">移除連結：</span><span class="lang-en">Links removed:</span></li>
+</ul>
+<p><span class="lang-zh">  - OGLD Form 1645 - Remittance Form</span><span class="lang-en">  - OGLD Form 1645 - Remittance Form</span></p>
+<p><span class="lang-zh">  - OG Form 1535 - Declaration of Security Compliance Officer Form</span><span class="lang-en">  - OG Form 1535 - Declaration of Security Compliance Officer Form</span></p>
+<p><span class="lang-zh">  - OGLD Form 569 - Request for Refund of Performance Bond</span><span class="lang-en">  - OGLD Form 569 - Request for Refund of Performance Bond</span></p>
+</details>
+</details>
+<details id="sec-1" class="section"><summary><h2><span class="lang-zh">低風險留痕</span><span class="lang-en">Low-Risk Log</span></h2></summary>
+<p><span class="lang-zh">以下為低風險變動，僅留存追溯紀錄，不需要立即處理。</span><span class="lang-en">The items below are low-risk changes, kept only for audit trail - no immediate action needed.</span></p>
+<details class="item"><summary>1. <span class="sev-badge sev-low">Low</span> <span class="lang-zh">📝 內容更新：Remote Operations and Ancillary Services（共 1 處異動：DOWNLOADABLE FORMS）</span><span class="lang-en">📝 Content updated: Remote Operations and Ancillary Services (1 location(s) changed: DOWNLOADABLE FORMS)</span></summary>
+<ul>
+<li><span class="lang-zh">檔案本身有更新、文字內容有變化、大小增加 16 bytes。</span><span class="lang-en">The file itself was updated, text content changed, size increased by 16 bytes.</span></li>
+<li><span class="lang-zh">資料位置：🌐 前端網頁 — 瀏覽器打開網址就看得到</span><span class="lang-en">Where to find it: 🌐 Front-end webpage - visible directly by opening the URL in a browser</span></li>
+<li><span class="lang-zh">可能影響：低風險變動，已留痕供追溯。</span><span class="lang-en">Possible impact: Low-risk change, logged for audit trail.</span></li>
+<li><span class="lang-zh">來源：https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span><span class="lang-en">Source: https://www.pagcor.ph/regulatory/remote-operations-and-ancillary-services.php</span></li>
+<li><span class="lang-zh">變動位置與文字片段：</span><span class="lang-en">Change locations and text snippets:</span></li>
+</ul>
+<p><span class="lang-zh">  - DOWNLOADABLE FORMS：頁面開頭</span><span class="lang-en">  - DOWNLOADABLE FORMS: page start</span></p>
+<p><span class="lang-zh">    - 新增：ROASD</span><span class="lang-en">    - Added: ROASD</span></p>
+<p><span class="lang-zh">    - 新增：ROASD</span><span class="lang-en">    - Added: ROASD</span></p>
+<p><span class="lang-zh">    - 移除：OG Form 1535 - Declaration of Security Compliance Officer Form</span><span class="lang-en">    - Removed: OG Form 1535 - Declaration of Security Compliance Officer Form</span></p>
+<p><span class="lang-zh">    - 移除：OGLD</span><span class="lang-en">    - Removed: OGLD</span></p>
+<p><span class="lang-zh">    - 移除：OGLD</span><span class="lang-en">    - Removed: OGLD</span></p>
+</details>
+</details>
+<h2 id="sec-2"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></h2>
+<ul>
+<li><span class="lang-zh">https://www.pagcor.ph/regulatory/index.html：404 Client Error: Not Found for url: https://www.pagcor.ph/regulatory/index.html</span><span class="lang-en">https://www.pagcor.ph/regulatory/index.html: 404 Client Error: Not Found for url: https://www.pagcor.ph/regulatory/index.html</span></li>
+</ul>
+<script>
+(function(){
+  var btn = document.getElementById('lang-toggle');
+  if (!btn) return;
+  function label(){ return document.documentElement.getAttribute('data-lang') === 'en' ? '中文' : 'EN'; }
+  btn.textContent = label();
+  btn.addEventListener('click', function(){
+    var next = document.documentElement.getAttribute('data-lang') === 'en' ? 'zh' : 'en';
+    document.documentElement.setAttribute('data-lang', next);
+    localStorage.setItem('pagcor-lang', next);
+    btn.textContent = label();
+  });
+})();
+</script>
+</body>
+</html>
