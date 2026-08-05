@@ -1562,26 +1562,12 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
     lines: list[tuple[str, str]] = [
         ("# PAGCOR Regulatory Daily Monitor", "# PAGCOR Regulatory Daily Monitor"),
         ("", ""),
-        (f"- 檢查時間：{now.strftime('%Y-%m-%d %H:%M:%S')}", f"- Checked at: {now.strftime('%Y-%m-%d %H:%M:%S')}"),
-        (f"- 監控資源數：{len(run.resources)}", f"- Resources monitored: {len(run.resources)}"),
-        (f"- 抓取失敗數：{len(run.failures)}", f"- Fetch failures: {len(run.failures)}"),
-        (f"- 達到資源上限：{'是' if run.max_resources_hit else '否'}", f"- Resource limit reached: {'Yes' if run.max_resources_hit else 'No'}"),
-        (f"- 變動總數：{len(changes)}", f"- Total changes: {len(changes)}"),
-        ("", ""),
-        ("## 分級摘要", "## Severity Summary"),
-        ("", ""),
-        (f"- Critical: {counts['Critical']}", f"- Critical: {counts['Critical']}"),
-        (f"- High: {counts['High']}", f"- High: {counts['High']}"),
-        (f"- Medium: {counts['Medium']}", f"- Medium: {counts['Medium']}"),
-        (f"- Low: {counts['Low']}", f"- Low: {counts['Low']}"),
-        ("", ""),
     ]
     type_counts = Counter(c["type"] for c in changes)
     if type_counts:
         sorted_types = sorted(type_counts.items(), key=lambda item: -item[1])
         type_summary_zh = "、".join(f"{change_label(t)[0]} {n}" for t, n in sorted_types)
         type_summary_en = ", ".join(f"{change_label(t)[1]} {n}" for t, n in sorted_types)
-        lines += [("## 變動類型分布", "## Change Type Distribution"), ("", ""), (f"- {type_summary_zh}", f"- {type_summary_en}"), ("", "")]
 
     notices: list[tuple[str, str]] = []
     if run.max_resources_hit:
@@ -1663,13 +1649,22 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
         "PAGCOR Regulatory Daily Monitor",
         f"檢查時間：{now.strftime('%Y-%m-%d %H:%M:%S')}",
         "",
+        f"監控資源數：{len(run.resources)}",
+        f"抓取失敗：{len(run.failures)}",
+        f"達到資源上限：{'是' if run.max_resources_hit else '否'}",
         f"變動總數：{len(changes)}",
-        f"Critical: {counts['Critical']} | High: {counts['High']} | Medium: {counts['Medium']} | Low: {counts['Low']}",
-        f"監控資源數：{len(run.resources)} | 抓取失敗：{len(run.failures)}",
+        "",
+        "分級摘要：",
+        f"Critical: {counts['Critical']}",
+        f"High: {counts['High']}",
+        f"Medium: {counts['Medium']}",
+        f"Low: {counts['Low']}",
+        "",
     ]
     if type_counts:
-        summary_lines.append(f"變動類型：{type_summary_zh}")
-    summary_lines.append("")
+        summary_lines.append("變動類型分布：")
+        summary_lines.append(type_summary_zh)
+        summary_lines.append("")
     if urgent:
         summary_lines.append("優先閱讀：")
         for idx, change in enumerate(urgent[:8], 1):
