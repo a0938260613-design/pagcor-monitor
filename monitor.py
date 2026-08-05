@@ -1174,6 +1174,25 @@ def pair_renamed_links(added: list[str], removed: list[str]) -> tuple[list[tuple
     return renamed, remaining_added, remaining_removed
 
 
+def render_link_group_html(label_zh: str, label_en: str, items: list[str]) -> str:
+    """A collapsed <details> block for one group of link changes, so a long
+    added/removed list doesn't dump onto the page by default - the summary
+    shows the count, click to see the actual items."""
+    items_html = "".join(f"<li>{html.escape(item)}</li>" for item in items)
+    return (
+        f'<details class="link-group"><summary>{dual_span(label_zh, label_en)} ({len(items)})</summary>'
+        f"<ul>{items_html}</ul></details>"
+    )
+
+
+def render_rename_group_html(pairs: list[tuple[str, str]]) -> str:
+    items_html = "".join(f"<li>{html.escape(old)} → {html.escape(new)}</li>" for old, new in pairs)
+    return (
+        f'<details class="link-group"><summary>{dual_span("同一份文件、換了名稱或部門代碼（非真正新增/移除）", "Same document, just renamed or re-coded (not a real addition/removal)")} ({len(pairs)})</summary>'
+        f"<ul>{items_html}</ul></details>"
+    )
+
+
 def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_details: bool = True) -> None:
     """Append (zh, en) line pairs describing one change. Every line carries
     the same Markdown-structural prefix in both languages (headings, "- "
@@ -1312,17 +1331,14 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
         removed = [item["text"] or item["url"] for item in change.get("removed_links", [])]
         renamed, added, removed = pair_renamed_links(added, removed)
         if renamed:
-            lines.append(("- 可能改名／代碼異動（表單名稱相同，前綴不同，非真正新增或移除）：", "- Possibly renamed (same form name, different code prefix - not a real addition or removal):"))
-            for old_item, new_item in renamed:
-                lines.append((f"  - {old_item} → {new_item}", f"  - {old_item} → {new_item}"))
+            block = render_rename_group_html(renamed)
+            lines.append((block, block))
         if added:
-            lines.append(("- 新增連結：", "- Links added:"))
-            for item in added:
-                lines.append((f"  - {item}", f"  - {item}"))
+            block = render_link_group_html("新增連結", "Links added", added)
+            lines.append((block, block))
         if removed:
-            lines.append(("- 移除連結：", "- Links removed:"))
-            for item in removed:
-                lines.append((f"  - {item}", f"  - {item}"))
+            block = render_link_group_html("移除連結", "Links removed", removed)
+            lines.append((block, block))
     lines.append(("", ""))
 
 
@@ -1578,9 +1594,9 @@ def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
             # src is a data: URI we generated ourselves (base64 alphabet only),
             # safe to place unescaped; alt/title (bilingual already) still escaped.
             body_lines.append(f'<img class="page-thumb" alt="{html.escape(alt)}" title="{html.escape(alt)}" src="{src}" loading="lazy">')
-        elif zh.startswith('<div class="thumb-compare">'):
-            # Pre-built raw HTML from render_thumbnail_compare (bilingual
-            # captions already baked in via dual_span) - pass through as-is.
+        elif zh.startswith('<div class="thumb-compare">') or zh.startswith('<details class="link-group">'):
+            # Pre-built raw HTML (bilingual captions already baked in via
+            # dual_span) - pass through as-is.
             close_list()
             body_lines.append(zh)
         else:
@@ -1608,6 +1624,10 @@ details.item summary{cursor:pointer;font-weight:600;padding:8px 0;list-style:rev
 .sev-high{background:#ea580c}
 .sev-medium{background:#ca8a04}
 .sev-low{background:#6b7280}
+details.link-group{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;margin-top:8px;padding:4px 14px}
+details.link-group summary{cursor:pointer;font-weight:600;padding:6px 0}
+details.link-group ul{margin:6px 0;padding-left:22px}
+details.link-group li{margin:3px 0}
 details.item[open] summary{border-bottom:1px solid #e5e7eb;margin-bottom:8px}
 details.section summary{cursor:pointer;list-style:none}
 details.section summary h2{display:inline}
