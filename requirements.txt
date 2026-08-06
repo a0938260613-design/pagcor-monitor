@@ -7,3 +7,4 @@ pillow>=10.0.0
 pytesseract>=0.3.10
 pdf2image>=1.17.0
 pymupdf>=1.24.0
+playwright>=1.40.0

@@ -41,6 +41,11 @@ try:
 except Exception:  # pragma: no cover
     fitz = None
 
+try:
+    from playwright.sync_api import sync_playwright  # renders HTML page thumbnails
+except Exception:  # pragma: no cover
+    sync_playwright = None
+
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -75,6 +80,7 @@ PAGE_LABEL_RE = re.compile(r"^第 (\d+) 頁$")
 SEVERITY_BADGE_RE = re.compile(r"^(\d+\.\s+)\[(Critical|High|Medium|Low)\]\s*(.*)$")
 THUMBNAIL_MAX_WIDTH_PX = 700
 MARKDOWN_IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\((.+)\)$")
+SOURCE_LINE_RE = re.compile(r"^- (?:來源|Source)[：:]\s*(https?://\S+)\s*$")
 
 
 @dataclass
@@ -312,6 +318,8 @@ def find_highlight_rects(page, text: str) -> list:
 
 REMOVED_HIGHLIGHT_COLOR = (0.86, 0.15, 0.15)  # red - matches the caption/legend text shown next to "before" thumbnails
 ADDED_HIGHLIGHT_COLOR = (0.13, 0.55, 0.13)  # green - matches the caption/legend text shown next to "after" thumbnails
+REMOVED_HIGHLIGHT_HEX = "#dc2626"  # same red, as a CSS color for the HTML (Playwright) thumbnail path
+ADDED_HIGHLIGHT_HEX = "#16a34a"  # same green, as a CSS color for the HTML (Playwright) thumbnail path
 
 
 def render_pdf_page_thumbnail(
@@ -347,6 +355,138 @@ def render_pdf_page_thumbnail(
         return None
 
 
+# PAGCOR's site hides forms/lists inside Bootstrap collapse panels
+# (data-toggle="collapse" + class="collapse", CSS display:none until toggled) -
+# confirmed by inspecting the live page source. Forcing them open here means a
+# reader never has to guess which button to click; the raw text was already
+# visible to the crawler regardless (it never runs the page's JS).
+FORCE_EXPAND_CSS = ".collapse{display:block!important;height:auto!important;overflow:visible!important}"
+
+
+def render_html_diff_thumbnail(
+    browser,
+    source: str,
+    highlight_text: str,
+    is_url: bool,
+    highlight_color: str = REMOVED_HIGHLIGHT_HEX,
+    max_width_px: int = THUMBNAIL_MAX_WIDTH_PX,
+) -> tuple[str, str] | None:
+    """Render a webpage (live URL for the current version, or a local saved-HTML
+    file:// path for an old version that's no longer live), with an outline
+    drawn around the located highlight_text - the HTML equivalent of
+    render_pdf_page_thumbnail. Returns (full_page_thumb, closeup_thumb) as base64
+    PNG data URIs: the full-page shot answers "where on the page is this" (the
+    whole scrollable page, so the highlight box may be small - it's for
+    orientation, not reading), the close-up answers "what does it actually say"
+    (cropped to the section, so the text stays legible). Returns None (not
+    raised) on any failure - missing Playwright, page load timeout, text not
+    found - so a thumbnail miss never breaks report generation. browser is a
+    shared Playwright Browser, created once per render_reports call (launching
+    a browser per change would be far slower)."""
+    if sync_playwright is None or browser is None:
+        return None
+    needle = pdf_search_needle(highlight_text)
+    if not needle:
+        return None
+    page = None
+    try:
+        page = browser.new_page(viewport={"width": max_width_px, "height": 1000})
+        target = source if is_url else Path(source).resolve().as_uri()
+        page.goto(target, timeout=20000, wait_until="domcontentloaded")
+        page.add_style_tag(content=FORCE_EXPAND_CSS)
+        locator = page.get_by_text(needle, exact=False).first
+        try:
+            locator.wait_for(state="attached", timeout=4000)
+        except Exception:
+            # Long diff snippets can diverge from the page's literal text
+            # (wrapping, spacing) - same problem pdf_search_needle's caller
+            # solves for PDFs; retry with just the first few words.
+            words = needle.split()
+            if len(words) <= 5:
+                raise
+            locator = page.get_by_text(" ".join(words[:5]), exact=False).first
+            locator.wait_for(state="attached", timeout=4000)
+        locator.evaluate(
+            "(el, color) => { el.style.outline = '3px solid ' + color; "
+            "el.style.outlineOffset = '2px'; el.style.backgroundColor = color + '22'; }",
+            highlight_color,
+        )
+        # A tight crop around just the matched line answers "what changed" but
+        # not "where on the page" - a reader can't tell which section they'd be
+        # looking at. Prefer the whole enclosing collapse panel PLUS its trigger
+        # button (the sibling immediately before it, per PAGCOR's confirmed
+        # Bootstrap markup: <button data-target="#x">...</button><div id="x"
+        # class="collapse">) so the section heading is visibly part of the shot.
+        # Falls back to a generously padded box around just the element when
+        # there's no such panel (e.g. plain paragraph text).
+        section_box = locator.evaluate(
+            """(el) => {
+                const panel = el.closest('.collapse, details');
+                const elBox = el.getBoundingClientRect();
+                if (!panel) return null;
+                const panelBox = panel.getBoundingClientRect();
+                const trigger = panel.previousElementSibling;
+                const topBox = trigger ? trigger.getBoundingClientRect() : panelBox;
+                return {
+                    top: Math.min(topBox.top, elBox.top),
+                    left: Math.min(topBox.left, panelBox.left, elBox.left),
+                    right: Math.max(topBox.right, panelBox.right, elBox.right),
+                    bottom: Math.min(panelBox.bottom, elBox.bottom + 400),
+                };
+            }"""
+        )
+        box = locator.bounding_box()
+        if box is None:
+            return None
+        if section_box:
+            max_height = 650  # cap so a huge panel doesn't produce an unreadably tall image
+            top = section_box["top"]
+            height = min(section_box["bottom"] - top, max_height)
+            clip = {
+                "x": max(0, section_box["left"] - 15),
+                "y": max(0, top - 15),
+                "width": min(max_width_px, section_box["right"] - section_box["left"] + 30),
+                "height": height + 30,
+            }
+        else:
+            pad = 150
+            clip = {
+                "x": max(0, box["x"] - 20),
+                "y": max(0, box["y"] - pad),
+                "width": min(max_width_px, box["width"] + 40),
+                "height": box["height"] + pad * 2,
+            }
+        full_page_bytes = page.screenshot(full_page=True)
+        closeup_bytes = page.screenshot(clip=clip, full_page=True)
+        full_page_thumb = "data:image/png;base64," + base64.b64encode(full_page_bytes).decode("ascii")
+        closeup_thumb = "data:image/png;base64," + base64.b64encode(closeup_bytes).decode("ascii")
+        return full_page_thumb, closeup_thumb
+    except Exception:
+        return None
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
+def append_page_location_thumb(lines: list[tuple[str, str]], label_zh: str, label_en: str, thumb: tuple[str, str] | None) -> None:
+    """Appends a captioned full-page screenshot (the first element of a
+    render_html_diff_thumbnail result) so a reader immediately sees roughly
+    where on the page a change sits, before the legible close-up that follows.
+    No-op if thumb is None (screenshot unavailable)."""
+    if not thumb:
+        return
+    full_page, _closeup = thumb
+    lines.append((
+        f"📍 {label_zh}在頁面上的位置（完整頁面參考，文字細節請看下方近拍）：",
+        f"📍 Where {label_en} sits on the full page (see the close-up below for readable text):",
+    ))
+    alt = f"{label_en} - full page reference"
+    lines.append((f"![{alt}]({full_page})", f"![{alt}]({full_page})"))
+
+
 def save_download(url: str, content: bytes, digest: str) -> Path:
     suffix = Path(urlparse(url).path).suffix.lower() or ".bin"
     path = DOWNLOAD_DIR / f"{digest}{suffix}"
@@ -378,6 +518,11 @@ def snapshot_resource(session: requests.Session, url: str, checked_at: str, time
         title = extract_title(content, title)
         text_blocks = extract_html_blocks(content)
         text = normalize_text("\n".join(block.get("text", "") for block in text_blocks))
+        # Saved (like PDFs below) so a later run can re-open THIS exact old
+        # version's raw markup to render a "before" screenshot once it's no
+        # longer live on the site - see render_html_diff_thumbnail.
+        local = save_download(url, content, digest)
+        local_path = str(local.relative_to(ROOT))
     else:
         local = save_download(url, content, digest)
         local_path = str(local.relative_to(ROOT))
@@ -977,6 +1122,7 @@ def compare_snapshots(
                         "snapshot": snapshot,
                         "added_links": added_links,
                         "removed_links": removed_links,
+                        "old_local_path": old.get("local_path", ""),
                     }
                 )
 
@@ -997,6 +1143,46 @@ def compare_snapshots(
         change["severity_reason"] = reason
         change["impact"] = business_impact(change["snapshot"], severity, change["type"], change)
     return changes
+
+
+def mark_subordinate_changes(changes: list[dict]) -> None:
+    """Mutates changes in place. A page's own added_links/removed_links (from a
+    links_changed change) is the front-end-visible signal for "a link appeared/
+    disappeared here" - a standalone added/removed change for that same URL is
+    just the back-end echo of the same real event, not an independent finding.
+    Flag it "subordinate" so render_reports can fold it out of headline counts
+    and its own report entry, while leaving type/url untouched (build_recent_removals
+    still needs every "removed" entry to track resources that briefly vanish and
+    reappear within RESURFACE_WINDOW_DAYS).
+
+    Severity can genuinely disagree between the two paths (classify_severity keys
+    off the removed file's own filename on one side, the parent page's link text
+    on the other) - if the subordinate change is more severe, its severity/reason
+    is promoted onto the links_changed change instead of being silently dropped.
+    """
+    explained_added: dict[str, dict] = {}
+    explained_removed: dict[str, dict] = {}
+    for change in changes:
+        if change["type"] != "links_changed":
+            continue
+        for item in change.get("added_links", []):
+            explained_added[item["url"]] = change
+        for item in change.get("removed_links", []):
+            explained_removed[item["url"]] = change
+
+    for change in changes:
+        if change["type"] == "added":
+            parent = explained_added.get(change["url"])
+        elif change["type"] == "removed":
+            parent = explained_removed.get(change["url"])
+        else:
+            continue
+        if parent is None:
+            continue
+        change["subordinate"] = True
+        if SEVERITY_ORDER[change["severity"]] < SEVERITY_ORDER[parent["severity"]]:
+            parent["severity"] = change["severity"]
+            parent["severity_reason"] = change["severity_reason"]
 
 
 def format_list(items: list[str], limit: int = 12, lang: str = "zh") -> str:
@@ -1193,7 +1379,7 @@ def render_rename_group_html(pairs: list[tuple[str, str]]) -> str:
     )
 
 
-def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_details: bool = True) -> None:
+def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_details: bool = True, browser=None) -> None:
     """Append (zh, en) line pairs describing one change. Every line carries
     the same Markdown-structural prefix in both languages (headings, "- "
     bullets, blank lines) so markdown_to_basic_html can drive HTML structure
@@ -1295,27 +1481,56 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
                             ROOT / snapshot.local_path, page_number,
                             highlight_texts=detail.get("added"), highlight_color=ADDED_HIGHLIGHT_COLOR,
                         )
+                    label_zh, label_en = f"第 {page_number} 頁", f"Page {page_number}"
                     if old_thumb and new_thumb:
                         # Side by side, not stacked - scanning left-right to spot the
                         # difference is much easier than scrolling between two stacked shots.
-                        compare_html = render_thumbnail_compare(page_number, old_thumb, new_thumb)
+                        compare_html = render_thumbnail_compare(label_zh, label_en, old_thumb, new_thumb)
                         lines.append((compare_html, compare_html))
                     elif old_thumb:
                         # Visible caption, not just alt/title (which most readers never see) -
                         # states which image this is (before/after) and what the box color means.
-                        lines.append((
-                            f"🔴 第 {page_number} 頁－修改前：紅框標示即將被移除的內容",
-                            f"🔴 Page {page_number} - Before: red box marks content that was removed",
-                        ))
-                        alt = f"Page {page_number} - before"
+                        lines.append((f"🔴 {label_zh}－修改前：紅框標示即將被移除的內容", f"🔴 {label_en} - Before: red box marks content that was removed"))
+                        alt = f"{label_en} - before"
                         lines.append((f"![{alt}]({old_thumb})", f"![{alt}]({old_thumb})"))
                     elif new_thumb:
-                        lines.append((
-                            f"🟢 第 {page_number} 頁－修改後：綠框標示新增的內容",
-                            f"🟢 Page {page_number} - After: green box marks newly added content",
-                        ))
-                        alt = f"Page {page_number} - after"
+                        lines.append((f"🟢 {label_zh}－修改後：綠框標示新增的內容", f"🟢 {label_en} - After: green box marks newly added content"))
+                        alt = f"{label_en} - after"
                         lines.append((f"![{alt}]({new_thumb})", f"![{alt}]({new_thumb})"))
+                elif snapshot.kind == "html" and browser is not None:
+                    # No page-number concept for HTML - use the section's own
+                    # heading as the label, and screenshot the live/saved page
+                    # itself instead of a PDF page render.
+                    old_local_path = change.get("old_local_path")
+                    removed_snippets = detail.get("removed") or []
+                    added_snippets = detail.get("added") or []
+                    old_thumb = None  # (full_page, closeup) tuple, or None
+                    new_thumb = None
+                    if old_local_path and removed_snippets:
+                        old_thumb = render_html_diff_thumbnail(
+                            browser, str(ROOT / old_local_path), removed_snippets[0],
+                            is_url=False, highlight_color=REMOVED_HIGHLIGHT_HEX,
+                        )
+                    if added_snippets:
+                        new_thumb = render_html_diff_thumbnail(
+                            browser, snapshot.url, added_snippets[0],
+                            is_url=True, highlight_color=ADDED_HIGHLIGHT_HEX,
+                        )
+                    label = detail.get("label") or "頁面"
+                    append_page_location_thumb(lines, label, label, new_thumb or old_thumb)
+                    old_close = old_thumb[1] if old_thumb else None
+                    new_close = new_thumb[1] if new_thumb else None
+                    if old_close and new_close:
+                        compare_html = render_thumbnail_compare(label, label, old_close, new_close)
+                        lines.append((compare_html, compare_html))
+                    elif old_close:
+                        lines.append((f"🔴 {label}－修改前：紅框標示即將被移除的內容", f"🔴 {label} - Before: red box marks content that was removed"))
+                        alt = f"{label} - before"
+                        lines.append((f"![{alt}]({old_close})", f"![{alt}]({old_close})"))
+                    elif new_close:
+                        lines.append((f"🟢 {label}－修改後：綠框標示新增的內容", f"🟢 {label} - After: green box marks newly added content"))
+                        alt = f"{label} - after"
+                        lines.append((f"![{alt}]({new_close})", f"![{alt}]({new_close})"))
         else:
             lines.append((
                 "- 變動位置與文字片段：目前基準沒有逐頁/分段文字，或此檔案無法抽取文字；本次已建立詳細基準，後續變更會顯示位置。",
@@ -1333,6 +1548,30 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
         if renamed:
             block = render_rename_group_html(renamed)
             lines.append((block, block))
+            if browser is not None:
+                old_local_path = change.get("old_local_path")
+                for old_text, new_text in renamed:
+                    item_label = new_text[:80]
+                    old_thumb = render_html_diff_thumbnail(
+                        browser, str(ROOT / old_local_path), old_text,
+                        is_url=False, highlight_color=REMOVED_HIGHLIGHT_HEX,
+                    ) if old_local_path else None
+                    new_thumb = render_html_diff_thumbnail(
+                        browser, snapshot.url, new_text,
+                        is_url=True, highlight_color=ADDED_HIGHLIGHT_HEX,
+                    )
+                    append_page_location_thumb(lines, item_label, item_label, new_thumb or old_thumb)
+                    old_close = old_thumb[1] if old_thumb else None
+                    new_close = new_thumb[1] if new_thumb else None
+                    if old_close and new_close:
+                        # No label repeated here - the 📍 caption above already named
+                        # this item, and these two images sit right under it.
+                        compare_html = render_thumbnail_compare("", "", old_close, new_close)
+                        lines.append((compare_html, compare_html))
+                    elif new_close:
+                        lines.append(("🟢 近拍：綠框標示改名後的文字", "🟢 Close-up: green box marks the text after the rename"))
+                        alt = f"{item_label} location"
+                        lines.append((f"![{alt}]({new_close})", f"![{alt}]({new_close})"))
         if added:
             block = render_link_group_html("新增連結", "Links added", added)
             lines.append((block, block))
@@ -1460,25 +1699,27 @@ def dual_span(zh: str, en: str) -> str:
     return f'<span class="lang-zh">{html.escape(zh)}</span><span class="lang-en">{html.escape(en)}</span>'
 
 
-def render_thumbnail_compare(page_number: int, old_thumb: str, new_thumb: str) -> str:
-    """Side-by-side before/after PDF page thumbnails, so a reader can spot
-    the difference by scanning left-right instead of scrolling up-down
-    between two stacked screenshots. Wraps to stacked automatically on
+def render_thumbnail_compare(label_zh: str, label_en: str, old_thumb: str, new_thumb: str) -> str:
+    """Side-by-side before/after thumbnails (PDF page or HTML section), so a
+    reader can spot the difference by scanning left-right instead of scrolling
+    up-down between two stacked screenshots. Wraps to stacked automatically on
     narrow screens via flex-wrap (see .thumb-compare CSS)."""
+    prefix_zh = f"{label_zh}－" if label_zh else ""
+    prefix_en = f"{label_en} - " if label_en else ""
     before_caption = dual_span(
-        f"🔴 第 {page_number} 頁－修改前：紅框標示即將被移除的內容",
-        f"🔴 Page {page_number} - Before: red box marks content that was removed",
+        f"🔴 {prefix_zh}修改前：紅框標示即將被移除的內容",
+        f"🔴 {prefix_en}Before: red box marks content that was removed",
     )
     after_caption = dual_span(
-        f"🟢 第 {page_number} 頁－修改後：綠框標示新增的內容",
-        f"🟢 Page {page_number} - After: green box marks newly added content",
+        f"🟢 {prefix_zh}修改後：綠框標示新增的內容",
+        f"🟢 {prefix_en}After: green box marks newly added content",
     )
     return (
         '<div class="thumb-compare">'
         f'<div class="thumb-col"><p>{before_caption}</p>'
-        f'<img class="page-thumb" alt="Page {page_number} - before" title="Page {page_number} - before" src="{old_thumb}" loading="lazy"></div>'
+        f'<img class="page-thumb" alt="{html.escape(label_en)} - before" title="{html.escape(label_en)} - before" src="{old_thumb}" loading="lazy"></div>'
         f'<div class="thumb-col"><p>{after_caption}</p>'
-        f'<img class="page-thumb" alt="Page {page_number} - after" title="Page {page_number} - after" src="{new_thumb}" loading="lazy"></div>'
+        f'<img class="page-thumb" alt="{html.escape(label_en)} - after" title="{html.escape(label_en)} - after" src="{new_thumb}" loading="lazy"></div>'
         "</div>"
     )
 
@@ -1587,7 +1828,17 @@ def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
             if not in_list:
                 body_lines.append("<ul>")
                 in_list = True
-            body_lines.append(f"<li>{dual_span(zh[2:], en[2:])}</li>")
+            source_match_zh, source_match_en = SOURCE_LINE_RE.match(zh), SOURCE_LINE_RE.match(en)
+            if source_match_zh and source_match_en:
+                # Turn the source URL into a real link instead of plain text a
+                # reader has to select and copy - it's always our own crawled
+                # https://www.pagcor.ph/regulatory/... URL, safe to link directly.
+                safe_url = html.escape(source_match_zh.group(1), quote=True)
+                link_zh = f'<span class="lang-zh">來源：<a href="{safe_url}" target="_blank" rel="noopener noreferrer">{safe_url}</a></span>'
+                link_en = f'<span class="lang-en">Source: <a href="{safe_url}" target="_blank" rel="noopener noreferrer">{safe_url}</a></span>'
+                body_lines.append(f"<li>{link_zh}{link_en}</li>")
+            else:
+                body_lines.append(f"<li>{dual_span(zh[2:], en[2:])}</li>")
         elif MARKDOWN_IMAGE_RE.match(zh):
             close_list()
             alt, src = MARKDOWN_IMAGE_RE.match(zh).groups()
@@ -1645,16 +1896,23 @@ img.page-thumb{display:block;max-width:100%;height:auto;margin:8px 0;border:1px 
 """ + "\n".join(body_lines) + "\n" + LANG_TOGGLE_INIT_JS + "\n</body>\n</html>\n"
 def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False, prev_resource_count: int = 0) -> Path:
     now = datetime.now()
+    # "subordinate" changes (see mark_subordinate_changes) are the back-end echo of
+    # a front-end link-list change already reported elsewhere in this same run -
+    # excluded here so counts/totals reflect distinct real-world events, not every
+    # detection path that happened to fire for the same one.
+    ordered = sorted(
+        (c for c in changes if not c.get("subordinate")),
+        key=lambda c: (SEVERITY_ORDER[c["severity"]], c["snapshot"].title, c["url"]),
+    )
     counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
-    for change in changes:
+    for change in ordered:
         counts[change["severity"]] += 1
-    ordered = sorted(changes, key=lambda c: (SEVERITY_ORDER[c["severity"]], c["snapshot"].title, c["url"]))
 
     lines: list[tuple[str, str]] = [
         ("# PAGCOR Regulatory Daily Monitor", "# PAGCOR Regulatory Daily Monitor"),
         ("", ""),
     ]
-    type_counts = Counter(c["type"] for c in changes)
+    type_counts = Counter(c["type"] for c in ordered)
     if type_counts:
         sorted_types = sorted(type_counts.items(), key=lambda item: -item[1])
         type_summary_zh = "、".join(f"{change_label(t)[0]} {n}" for t, n in sorted_types)
@@ -1689,6 +1947,20 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
             lines.append((f"- {notice_zh}", f"- {notice_en}"))
         lines.append(("", ""))
 
+    # One shared browser for every screenshot this report needs (render_pdf_page_thumbnail
+    # doesn't need it, only render_html_diff_thumbnail) - launching a fresh browser per
+    # change would be far slower. browser stays None (thumbnails silently skipped) if
+    # Playwright isn't installed or the launch fails, so a report can always still render.
+    browser = None
+    _pw_ctx = None
+    if sync_playwright is not None:
+        try:
+            _pw_ctx = sync_playwright().start()
+            browser = _pw_ctx.chromium.launch(headless=True)
+        except Exception:
+            browser = None
+            _pw_ctx = None
+
     urgent = [c for c in ordered if c["severity"] in {"Critical", "High"}]
     if urgent:
         lines += [
@@ -1696,7 +1968,7 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
             ("建議：以下項目請優先人工複核來源文件。", "Recommendation: please prioritize manual review of the source documents for the items below."), ("", ""),
         ]
         for idx, change in enumerate(urgent, 1):
-            render_change(lines, idx, change)
+            render_change(lines, idx, change, browser=browser)
 
     medium = [c for c in ordered if c["severity"] == "Medium"]
     low = [c for c in ordered if c["severity"] == "Low"]
@@ -1706,16 +1978,27 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
             ("建議：非急迫，排入例行檢視即可。", "Recommendation: not urgent, schedule for routine review."), ("", ""),
         ]
         for idx, change in enumerate(medium, 1):
-            render_change(lines, idx, change)
+            render_change(lines, idx, change, browser=browser)
     if low:
         lines += [
             ("## 低風險留痕", "## Low-Risk Log"), ("", ""),
             ("以下為低風險變動，僅留存追溯紀錄，不需要立即處理。", "The items below are low-risk changes, kept only for audit trail - no immediate action needed."), ("", ""),
         ]
         for idx, change in enumerate(low, 1):
-            render_change(lines, idx, change, include_details=False)
+            render_change(lines, idx, change, include_details=False, browser=browser)
     if not ordered:
         lines += [("## 今日結果", "## Result"), ("", ""), ("未偵測到變動。", "No changes detected."), ("", "")]
+
+    if browser is not None:
+        try:
+            browser.close()
+        except Exception:
+            pass
+    if _pw_ctx is not None:
+        try:
+            _pw_ctx.stop()
+        except Exception:
+            pass
 
     if run.failures:
         lines += [("## 抓取失敗", "## Fetch Failures"), ("", "")]
@@ -1733,7 +2016,7 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
     (PAGES_DIR / "index.html").write_text(html_text, encoding="utf-8")
     (PAGES_DIR / "latest.html").write_text(html_text, encoding="utf-8")
     (PAGES_ARCHIVE_DIR / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}.html").write_text(html_text, encoding="utf-8")
-    history = append_history_entry(now, run, changes, counts)
+    history = append_history_entry(now, run, ordered, counts)
     HISTORY_HTML_PATH.write_text(render_history_html(history), encoding="utf-8")
 
     summary_lines = [
@@ -1743,7 +2026,7 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
         f"監控資源數：{len(run.resources)}",
         f"抓取失敗：{len(run.failures)}",
         f"達到資源上限：{'是' if run.max_resources_hit else '否'}",
-        f"變動總數：{len(changes)}",
+        f"變動總數：{len(ordered)}",
         "",
         "分級摘要：",
         f"Critical: {counts['Critical']}",
@@ -1756,17 +2039,6 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
         summary_lines.append("變動類型分布：")
         summary_lines.append(type_summary_zh)
         summary_lines.append("")
-    if urgent:
-        summary_lines.append("優先閱讀：")
-        for idx, change in enumerate(urgent[:8], 1):
-            summary_lines.append(f"{idx}. [{change['severity']}] {change_label(change['type'])[0]} - {readable_title(change['snapshot'])}")
-            if change["type"] not in COMPACT_CHANGE_TYPES:
-                summary_lines.append(f"   影響：{change['impact'][0]}")
-        if len(urgent) > 8:
-            summary_lines.append(f"另有 {len(urgent) - 8} 個 Critical/High 變動，請看完整報告。")
-    else:
-        summary_lines.append("未偵測到 Critical / High 變動。")
-    summary_lines.append("")
     pages_url = os.getenv("GITHUB_PAGES_URL", "").strip()
     if pages_url:
         # Link to this run's own archived snapshot, not the "latest" page -
@@ -1792,6 +2064,7 @@ def main() -> None:
         skip_removed_detection=run.max_resources_hit or shortfall,
         recent_removals=previous.get("recent_removals", {}),
     )
+    mark_subordinate_changes(changes)
     report = render_reports(changes, run, shortfall=shortfall, prev_resource_count=len(previous.get("resources", {})))
     if not run.max_resources_hit and not shortfall:
         save_state(run, build_recent_removals(previous, changes, run.checked_at))
@@ -1804,7 +2077,7 @@ def main() -> None:
     print(f"Failures: {len(run.failures)}")
     print(f"Max resources hit: {run.max_resources_hit}")
     print(f"Crawl shortfall: {shortfall}")
-    print(f"Changes: {len(changes)}")
+    print(f"Changes: {len([c for c in changes if not c.get('subordinate')])}")
 
 
 if __name__ == "__main__":

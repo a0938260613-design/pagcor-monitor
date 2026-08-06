@@ -6,10 +6,13 @@ Monitors the PAGCOR regulatory site for HTML, PDF, Excel, and document changes, 
 
 ```powershell
 python -m pip install -r requirements.txt
+playwright install chromium
 Copy-Item .env.example .env
 ```
 
 Fill Telegram values in `.env` only if you want push notifications.
+
+`playwright install chromium` is a one-time download (~100-200MB) of the headless browser used to render before/after screenshots for HTML page changes.
 
 ## Run
 
