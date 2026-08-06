@@ -528,5 +528,15 @@
     "high": 26,
     "medium": 4,
     "low": 16
+  },
+  {
+    "timestamp": "2026-08-06 20:09:05",
+    "file": "reports/2026-08-06_20-09-05.html",
+    "resources": 472,
+    "changes": 0,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0
   }
 ]
