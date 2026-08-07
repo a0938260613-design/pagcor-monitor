@@ -79,6 +79,20 @@ SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 PAGE_LABEL_RE = re.compile(r"^第 (\d+) 頁$")
 SEVERITY_BADGE_RE = re.compile(r"^(\d+\.\s+)\[(Critical|High|Medium|Low)\]\s*(.*)$")
 THUMBNAIL_MAX_WIDTH_PX = 700
+# Wider than THUMBNAIL_MAX_WIDTH_PX on purpose: rendering at the narrow output
+# width triggers PAGCOR's mobile-responsive navbar layout, which hides most of
+# the nav via a plain (unclassed) CSS media query - confirmed by finding a
+# real "Data on Player Exclusion" link whose <li> ancestors were display:none
+# only below ~768px. render_html_diff_thumbnail's per-element ancestor walk
+# would likely unhide those too, but a desktop-width viewport avoids relying
+# on that and sidesteps any other mobile-only layout quirks. Render wide, then
+# crop down to THUMBNAIL_MAX_WIDTH_PX for the actual embedded image.
+HTML_RENDER_VIEWPORT_WIDTH_PX = 1280
+# Each screenshot is a full extra page load+render, so a links_changed event
+# with many plain (non-renamed) added/removed links caps how many get one -
+# the text list above already shows every item regardless, this only limits
+# the bonus visual for the first few.
+LINK_SCREENSHOT_CAP = 5
 MARKDOWN_IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\((.+)\)$")
 SOURCE_LINE_RE = re.compile(r"^- (?:來源|Source)[：:]\s*(https?://\S+)\s*$")
 
@@ -355,12 +369,18 @@ def render_pdf_page_thumbnail(
         return None
 
 
-# PAGCOR's site hides forms/lists inside Bootstrap collapse panels
-# (data-toggle="collapse" + class="collapse", CSS display:none until toggled) -
-# confirmed by inspecting the live page source. Forcing them open here means a
-# reader never has to guess which button to click; the raw text was already
-# visible to the crawler regardless (it never runs the page's JS).
-FORCE_EXPAND_CSS = ".collapse{display:block!important;height:auto!important;overflow:visible!important}"
+# PAGCOR's site hides forms/lists behind several different mechanisms -
+# Bootstrap collapse panels (data-toggle="collapse" + class="collapse"),
+# navbar dropdown-menus, and a mobile-responsive nav that hides plain <li>
+# elements via a media query with no distinguishing class - confirmed by
+# inspecting the live page source and a real hidden link's ancestor chain.
+# Forcing a specific element's hidden ancestors open (see the per-locator
+# evaluate() in render_html_diff_thumbnail) means a reader never has to guess
+# which button to click; the raw text was already visible to the crawler
+# regardless (it never runs the page's JS). An earlier page-wide CSS override
+# forced every collapse/dropdown on the page open at once, which buried the
+# actually-relevant section under a bloated nav - scoping the fix to just the
+# target element's own ancestors avoids that.
 
 
 def render_html_diff_thumbnail(
@@ -390,10 +410,9 @@ def render_html_diff_thumbnail(
         return None
     page = None
     try:
-        page = browser.new_page(viewport={"width": max_width_px, "height": 1000})
+        page = browser.new_page(viewport={"width": HTML_RENDER_VIEWPORT_WIDTH_PX, "height": 1000})
         target = source if is_url else Path(source).resolve().as_uri()
         page.goto(target, timeout=20000, wait_until="domcontentloaded")
-        page.add_style_tag(content=FORCE_EXPAND_CSS)
         locator = page.get_by_text(needle, exact=False).first
         try:
             locator.wait_for(state="attached", timeout=4000)
@@ -406,6 +425,34 @@ def render_html_diff_thumbnail(
                 raise
             locator = page.get_by_text(" ".join(words[:5]), exact=False).first
             locator.wait_for(state="attached", timeout=4000)
+        # Force open only the hidden ancestors of THIS element, not every
+        # collapse/dropdown on the page - PAGCOR's shared nav has several
+        # dropdown-menus, and an earlier page-wide ".dropdown-menu{display:
+        # block}" rule forced all of them open at once, burying the actually-
+        # relevant section under the now-huge nav and making the full-page
+        # screenshot useless for orientation. Walking just this element's own
+        # ancestor chain covers Bootstrap .collapse, .dropdown-menu, and the
+        # mobile-responsive nav's plain (unclassed) media-query hiding alike,
+        # without touching anything unrelated elsewhere on the page.
+        locator.evaluate(
+            """(el) => {
+                let node = el;
+                while (node && node !== document.body) {
+                    const cs = window.getComputedStyle(node);
+                    if (cs.display === 'none') node.style.setProperty('display', 'block', 'important');
+                    if (cs.visibility === 'hidden') node.style.setProperty('visibility', 'visible', 'important');
+                    if (cs.opacity === '0') node.style.setProperty('opacity', '1', 'important');
+                    if (cs.overflow === 'hidden' && parseFloat(cs.height) < 5) {
+                        node.style.setProperty('height', 'auto', 'important');
+                        node.style.setProperty('overflow', 'visible', 'important');
+                    }
+                    if (cs.position === 'absolute' || cs.position === 'fixed') {
+                        node.style.setProperty('position', 'static', 'important');
+                    }
+                    node = node.parentElement;
+                }
+            }"""
+        )
         locator.evaluate(
             "(el, color) => { el.style.outline = '3px solid ' + color; "
             "el.style.outlineOffset = '2px'; el.style.backgroundColor = color + '22'; }",
@@ -413,15 +460,16 @@ def render_html_diff_thumbnail(
         )
         # A tight crop around just the matched line answers "what changed" but
         # not "where on the page" - a reader can't tell which section they'd be
-        # looking at. Prefer the whole enclosing collapse panel PLUS its trigger
-        # button (the sibling immediately before it, per PAGCOR's confirmed
-        # Bootstrap markup: <button data-target="#x">...</button><div id="x"
-        # class="collapse">) so the section heading is visibly part of the shot.
-        # Falls back to a generously padded box around just the element when
-        # there's no such panel (e.g. plain paragraph text).
+        # looking at. Prefer the whole enclosing panel PLUS its trigger button
+        # (the sibling immediately before it, per PAGCOR's confirmed markup:
+        # <button data-target="#x">...</button><div id="x" class="collapse">,
+        # or <a class="dropdown-toggle">...</a><ul class="dropdown-menu">) so
+        # the section heading is visibly part of the shot. Falls back to a
+        # generously padded box around just the element when there's no such
+        # panel (e.g. plain paragraph text).
         section_box = locator.evaluate(
             """(el) => {
-                const panel = el.closest('.collapse, details');
+                const panel = el.closest('.collapse, details, .dropdown-menu');
                 const elBox = el.getBoundingClientRect();
                 if (!panel) return null;
                 const panelBox = panel.getBoundingClientRect();
@@ -485,6 +533,31 @@ def append_page_location_thumb(lines: list[tuple[str, str]], label_zh: str, labe
     ))
     alt = f"{label_en} - full page reference"
     lines.append((f"![{alt}]({full_page})", f"![{alt}]({full_page})"))
+
+
+def append_single_side_thumb(
+    lines: list[tuple[str, str]], item_label: str, thumb: tuple[str, str] | None,
+    is_removed: bool, action_zh: str, action_en: str,
+) -> None:
+    """Appends the location + close-up caption/image pair for a change that
+    only has one side available (no before/after pair to compare against) -
+    e.g. a plain added or removed link, or a rename where the old page isn't
+    saved yet. is_removed picks red/"removed" vs green/"added" styling;
+    action_zh/action_en describe what the box marks (e.g. "新增的連結" /
+    "the added link"). No-op if thumb is None."""
+    if not thumb:
+        return
+    append_page_location_thumb(lines, item_label, item_label, thumb)
+    emoji = "🔴" if is_removed else "🟢"
+    color_zh = "紅" if is_removed else "綠"
+    color_en = "red" if is_removed else "green"
+    lines.append((
+        f"{emoji} {item_label}－近拍：{color_zh}框標示{action_zh}",
+        f"{emoji} {item_label} - Close-up: {color_en} box marks {action_en}",
+    ))
+    alt = f"{item_label} location"
+    closeup = thumb[1]
+    lines.append((f"![{alt}]({closeup})", f"![{alt}]({closeup})"))
 
 
 def save_download(url: str, content: bytes, digest: str) -> Path:
@@ -1560,24 +1633,47 @@ def render_change(lines: list[tuple[str, str]], idx: int, change: dict, include_
                         browser, snapshot.url, new_text,
                         is_url=True, highlight_color=ADDED_HIGHLIGHT_HEX,
                     )
-                    append_page_location_thumb(lines, item_label, item_label, new_thumb or old_thumb)
                     old_close = old_thumb[1] if old_thumb else None
                     new_close = new_thumb[1] if new_thumb else None
                     if old_close and new_close:
-                        # No label repeated here - the 📍 caption above already named
-                        # this item, and these two images sit right under it.
+                        # append_single_side_thumb (the else branch) already covers
+                        # this caption+image internally - only needed explicitly here,
+                        # since render_thumbnail_compare doesn't call it itself.
+                        append_page_location_thumb(lines, item_label, item_label, new_thumb or old_thumb)
                         compare_html = render_thumbnail_compare("", "", old_close, new_close)
                         lines.append((compare_html, compare_html))
-                    elif new_close:
-                        lines.append(("🟢 近拍：綠框標示改名後的文字", "🟢 Close-up: green box marks the text after the rename"))
-                        alt = f"{item_label} location"
-                        lines.append((f"![{alt}]({new_close})", f"![{alt}]({new_close})"))
+                    else:
+                        append_single_side_thumb(
+                            lines, item_label, new_thumb or old_thumb,
+                            is_removed=not new_close, action_zh="改名後的文字", action_en="the text after the rename",
+                        )
         if added:
             block = render_link_group_html("新增連結", "Links added", added)
             lines.append((block, block))
+            if browser is not None:
+                for text in added[:LINK_SCREENSHOT_CAP]:
+                    thumb = render_html_diff_thumbnail(
+                        browser, snapshot.url, text,
+                        is_url=True, highlight_color=ADDED_HIGHLIGHT_HEX,
+                    )
+                    append_single_side_thumb(
+                        lines, text[:80], thumb,
+                        is_removed=False, action_zh="新增的連結", action_en="the added link",
+                    )
         if removed:
             block = render_link_group_html("移除連結", "Links removed", removed)
             lines.append((block, block))
+            old_local_path = change.get("old_local_path")
+            if browser is not None and old_local_path:
+                for text in removed[:LINK_SCREENSHOT_CAP]:
+                    thumb = render_html_diff_thumbnail(
+                        browser, str(ROOT / old_local_path), text,
+                        is_url=False, highlight_color=REMOVED_HIGHLIGHT_HEX,
+                    )
+                    append_single_side_thumb(
+                        lines, text[:80], thumb,
+                        is_removed=True, action_zh="已移除的連結", action_en="the removed link",
+                    )
     lines.append(("", ""))
 
 
