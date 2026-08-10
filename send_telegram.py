@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 def trim_for_telegram(text: str, limit: int = 3900) -> str:
     if len(text) <= limit:
         return text
-    return text[: limit - 80].rstrip() + "\n\n...(完整報告請查看 reports/latest.md)"
+    return text[: limit - 80].rstrip() + "\n\n...(完整報告請查看網站上的最新報告)"
 
 
 def telegram_chat_ids() -> list[str]:
@@ -38,7 +38,11 @@ def telegram_chat_ids() -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("report_path", nargs="?", default=None, help="Report file to send (defaults to reports/telegram_summary.txt)")
+    parser.add_argument(
+        "report_paths", nargs="*", default=[],
+        help="Report file(s) to send (defaults to reports/telegram_summary.txt if none given). "
+        "Multiple paths are combined into a single message, in the order given.",
+    )
     parser.add_argument(
         "--chat-id",
         dest="chat_id",
@@ -58,8 +62,9 @@ def main() -> None:
     if not token or not chat_ids:
         raise SystemExit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID/TELEGRAM_CHAT_IDS in .env")
 
-    report_path = Path(args.report_path) if args.report_path else ROOT / "reports" / "telegram_summary.txt"
-    text = trim_for_telegram(report_path.read_text(encoding="utf-8"))
+    report_paths = [Path(p) for p in args.report_paths] if args.report_paths else [ROOT / "reports" / "telegram_summary.txt"]
+    section_separator = "\n\n" + "━" * 20 + "\n\n"
+    text = trim_for_telegram(section_separator.join(p.read_text(encoding="utf-8") for p in report_paths))
     for chat_id in chat_ids:
         payload = {
             "chat_id": chat_id,

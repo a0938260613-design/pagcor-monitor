@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-08-10 10:22:24",
+    "file": "reports/2026-08-10_10-22-24.html",
+    "posts": 278,
+    "changes": 278,
+    "critical": 147,
+    "high": 72,
+    "medium": 59,
+    "low": 0
+  },
+  {
+    "timestamp": "2026-08-10 10:37:23",
+    "file": "reports/2026-08-10_10-37-23.html",
+    "posts": 278,
+    "changes": 0,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0
+  }
+]

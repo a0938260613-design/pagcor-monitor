@@ -1820,7 +1820,12 @@ def render_thumbnail_compare(label_zh: str, label_en: str, old_thumb: str, new_t
     )
 
 
-def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
+def markdown_to_basic_html(
+    lines: list[tuple[str, str]],
+    page_title: str = "PAGCOR Regulatory Daily Monitor",
+    cross_links: list[tuple[str, str, str]] | None = None,
+    history_href: str | None = None,
+) -> str:
     """Render (zh, en) line pairs as HTML with a quick-nav bar, collapsible
     sections, and a language toggle. Every line's zh and en side must share
     the same Markdown-structural prefix (#, ##, ###, -, blank) - structure is
@@ -1830,6 +1835,15 @@ def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
     Every ### item defaults to collapsed (just the [Severity] title shows) and
     the Medium/Low sections collapse as a whole, so a 76-change report opens as
     a scannable table of contents instead of one long scroll.
+
+    page_title sets <title> (defaults to today's PAGCOR-only behavior).
+    cross_links is an optional list of (href, zh, en) tuples spliced into the
+    nav bar next to the History link - e.g. so a PAGCOR report can link to the
+    MeitY monitor's report and vice versa, without either site's own report
+    structure knowing about the other.
+    history_href overrides the default {GITHUB_PAGES_URL}/history.html link -
+    needed by any report that doesn't live at the Pages site root (e.g. MeitY's
+    under /meity/), since the default assumes root placement.
     """
     raw_lines = [(zh.rstrip(), en.rstrip()) for zh, en in lines]
 
@@ -1889,8 +1903,9 @@ def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
             close_section()
             body_lines.append(f"<h1>{dual_span(zh[2:], en[2:])}</h1>")
             pages_url = os.getenv("GITHUB_PAGES_URL", "").strip()
-            history_href = f"{pages_url.rstrip('/')}/history.html" if pages_url else "history.html"
-            nav_links = [f'<a href="{history_href}">📜 {dual_span("歷史紀錄", "History")}</a>']
+            resolved_history_href = history_href or (f"{pages_url.rstrip('/')}/history.html" if pages_url else "history.html")
+            nav_links = [f'<a href="{resolved_history_href}">📜 {dual_span("歷史紀錄", "History")}</a>']
+            nav_links += [f'<a href="{href}">{dual_span(zh_label, en_label)}</a>' for href, zh_label, en_label in (cross_links or [])]
             nav_links += [
                 f'<a href="#{sec_id}">{dual_span(heading_zh, heading_en)}{f" ({count})" if count else ""}</a>'
                 for sec_id, heading_zh, heading_en, count in nav_sections
@@ -1957,7 +1972,7 @@ def markdown_to_basic_html(lines: list[tuple[str, str]]) -> str:
 """ + LANG_TOGGLE_SCRIPT + """
 <meta charset=\"utf-8\">
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-<title>PAGCOR Regulatory Daily Monitor</title>
+<title>""" + html.escape(page_title) + """</title>
 <style>
 body{font-family:Arial,'Microsoft JhengHei',sans-serif;line-height:1.6;margin:32px;max-width:1100px;color:#1f2937;background:#f8fafc}
 h1,h2,h3{line-height:1.25;color:#111827}h1{font-size:28px}h2{font-size:22px;margin-top:28px;border-bottom:1px solid #d1d5db;padding-bottom:6px;display:inline-block}h3{font-size:18px;margin-top:22px}
@@ -2106,7 +2121,12 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
     report_path = REPORT_DIR / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}.md"
     report_path.write_text(report_text, encoding="utf-8")
     (REPORT_DIR / "latest.md").write_text(report_text, encoding="utf-8")
-    html_text = markdown_to_basic_html(lines)
+    pages_url = os.getenv("GITHUB_PAGES_URL", "").strip()
+    meity_href = f"{pages_url.rstrip('/')}/meity/index.html" if pages_url else "meity/index.html"
+    html_text = markdown_to_basic_html(
+        lines,
+        cross_links=[(meity_href, "🇮🇳 MeitY 監控", "🇮🇳 MeitY Monitor")],
+    )
     (REPORT_DIR / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}.html").write_text(html_text, encoding="utf-8")
     (REPORT_DIR / "latest.html").write_text(html_text, encoding="utf-8")
     (PAGES_DIR / "index.html").write_text(html_text, encoding="utf-8")
