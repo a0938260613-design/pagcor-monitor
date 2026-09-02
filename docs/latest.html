@@ -48,12 +48,23 @@ img.page-thumb{display:block;max-width:100%;height:auto;margin:8px 0;border:1px 
 </head>
 <body>
 <h1><span class="lang-zh">PAGCOR Regulatory Daily Monitor</span><span class="lang-en">PAGCOR Regulatory Daily Monitor</span></h1>
-<nav class="quicknav"><a href="https://a0938260613-design.github.io/pagcor-monitor/history.html">📜 <span class="lang-zh">歷史紀錄</span><span class="lang-en">History</span></a> · <a href="https://a0938260613-design.github.io/pagcor-monitor/meity/index.html"><span class="lang-zh">🇮🇳 MeitY 監控</span><span class="lang-en">🇮🇳 MeitY Monitor</span></a> · <a href="#sec-0"><span class="lang-zh">今日結果</span><span class="lang-en">Result</span></a> · <a href="#sec-1"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></a> · <button id="lang-toggle" type="button">EN</button></nav>
-<h2 id="sec-0"><span class="lang-zh">今日結果</span><span class="lang-en">Result</span></h2>
-<p><span class="lang-zh">未偵測到變動。</span><span class="lang-en">No changes detected.</span></p>
-<h2 id="sec-1"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></h2>
+<nav class="quicknav"><a href="https://a0938260613-design.github.io/pagcor-monitor/history.html">📜 <span class="lang-zh">歷史紀錄</span><span class="lang-en">History</span></a> · <a href="https://a0938260613-design.github.io/pagcor-monitor/meity/index.html"><span class="lang-zh">🇮🇳 MeitY 監控</span><span class="lang-en">🇮🇳 MeitY Monitor</span></a> · <a href="#sec-0"><span class="lang-zh">注意</span><span class="lang-en">Notice</span></a> · <a href="#sec-1"><span class="lang-zh">低風險留痕</span><span class="lang-en">Low-Risk Log</span> (1)</a> · <a href="#sec-2"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></a> · <button id="lang-toggle" type="button">EN</button></nav>
+<h2 id="sec-0"><span class="lang-zh">注意</span><span class="lang-en">Notice</span></h2>
 <ul>
-<li><span class="lang-zh">https://www.pagcor.ph/regulatory/index.html：404 Client Error: Not Found for url: https://www.pagcor.ph/regulatory/index.html</span><span class="lang-en">https://www.pagcor.ph/regulatory/index.html: 404 Client Error: Not Found for url: https://www.pagcor.ph/regulatory/index.html</span></li>
+<li><span class="lang-zh">本次抓到的資源數（0）明顯低於上次基準（479），疑似爬取不完整（可能是網站逾時或連線問題），而不是真的有資源被移除。系統這次不會判定短少的資源為「已移除」，也不會更新比對基準，等下次抓齊後才會正式比對。</span><span class="lang-en">This run only found 0 resources, well below the last baseline of 479 - the crawl looks incomplete (likely a site timeout or connection issue), not a real removal. The system will not mark the missing resources as &quot;removed&quot; this time, nor update the comparison baseline, until a future run completes a full crawl.</span></li>
+</ul>
+<details id="sec-1" class="section"><summary><h2><span class="lang-zh">低風險留痕</span><span class="lang-en">Low-Risk Log</span></h2></summary>
+<p><span class="lang-zh">以下為低風險變動，僅留存追溯紀錄，不需要立即處理。</span><span class="lang-en">The items below are low-risk changes, kept only for audit trail - no immediate action needed.</span></p>
+<details class="item"><summary>1. <span class="sev-badge sev-low">Low</span> <span class="lang-zh">⚠️ 抓取失敗：PAGCOR Regulatory</span><span class="lang-en">⚠️ Fetch failed: PAGCOR Regulatory</span></summary>
+<ul>
+<li><span class="lang-zh">這次無法成功讀取既有資源，因此不代表內容真的改變；需要下次重跑或人工開啟確認。（錯誤：HTTPSConnectionPool(host=&#x27;www.pagcor.ph&#x27;, port=443): Max retries exceeded with url: /regulatory/index.php (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host=&#x27;www.pagcor.ph&#x27;, port=443) at 0x19e8d091590&gt;, &#x27;Connection to www.pagcor.ph timed out. (connect timeout=45.0)&#x27;))）</span><span class="lang-en">This resource could not be fetched this time, so this does not necessarily mean its content changed; needs a re-run or manual check. (Error: HTTPSConnectionPool(host=&#x27;www.pagcor.ph&#x27;, port=443): Max retries exceeded with url: /regulatory/index.php (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host=&#x27;www.pagcor.ph&#x27;, port=443) at 0x19e8d091590&gt;, &#x27;Connection to www.pagcor.ph timed out. (connect timeout=45.0)&#x27;)))</span></li>
+<li><span class="lang-zh">來源：<a href="https://www.pagcor.ph/regulatory/index.php" target="_blank" rel="noopener noreferrer">https://www.pagcor.ph/regulatory/index.php</a></span><span class="lang-en">Source: <a href="https://www.pagcor.ph/regulatory/index.php" target="_blank" rel="noopener noreferrer">https://www.pagcor.ph/regulatory/index.php</a></span></li>
+</ul>
+</details>
+</details>
+<h2 id="sec-2"><span class="lang-zh">抓取失敗</span><span class="lang-en">Fetch Failures</span></h2>
+<ul>
+<li><span class="lang-zh">https://www.pagcor.ph/regulatory/index.php：HTTPSConnectionPool(host=&#x27;www.pagcor.ph&#x27;, port=443): Max retries exceeded with url: /regulatory/index.php (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host=&#x27;www.pagcor.ph&#x27;, port=443) at 0x19e8d091590&gt;, &#x27;Connection to www.pagcor.ph timed out. (connect timeout=45.0)&#x27;))</span><span class="lang-en">https://www.pagcor.ph/regulatory/index.php: HTTPSConnectionPool(host=&#x27;www.pagcor.ph&#x27;, port=443): Max retries exceeded with url: /regulatory/index.php (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host=&#x27;www.pagcor.ph&#x27;, port=443) at 0x19e8d091590&gt;, &#x27;Connection to www.pagcor.ph timed out. (connect timeout=45.0)&#x27;))</span></li>
 </ul>
 <script>
 (function(){
