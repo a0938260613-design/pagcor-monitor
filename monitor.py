@@ -93,6 +93,18 @@ HTML_RENDER_VIEWPORT_WIDTH_PX = 1280
 # the text list above already shows every item regardless, this only limits
 # the bonus visual for the first few.
 LINK_SCREENSHOT_CAP = 5
+# Thumbnails are embedded as data: URIs, so every byte lands in the report
+# HTML that gets pushed to GitHub (hard 100 MB per-file limit). Raw full-page
+# PNGs at 1280px wide once produced a 177 MB report (2026-09-28, 476 changes)
+# that blocked every push afterwards. Re-encode as JPEG, downscale full-page
+# shots (orientation only) harder than close-ups (must stay legible), and cap
+# the whole report's embedded-image total as a last line of defence.
+FULL_PAGE_THUMB_MAX_WIDTH_PX = 500
+FULL_PAGE_THUMB_MAX_HEIGHT_PX = 3500
+THUMB_JPEG_QUALITY = 82  # close-ups / PDF pages: text must stay readable
+FULL_PAGE_THUMB_JPEG_QUALITY = 65  # orientation only
+REPORT_EMBEDDED_IMAGE_BUDGET_BYTES = 40 * 1024 * 1024
+DATA_URI_IMG_RE = re.compile(r'src="(data:image/[a-z]+;base64,[A-Za-z0-9+/=]+)"')
 MARKDOWN_IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\((.+)\)$")
 SOURCE_LINE_RE = re.compile(r"^- (?:來源|Source)[：:]\s*(https?://\S+)\s*$")
 
@@ -336,6 +348,70 @@ REMOVED_HIGHLIGHT_HEX = "#dc2626"  # same red, as a CSS color for the HTML (Play
 ADDED_HIGHLIGHT_HEX = "#16a34a"  # same green, as a CSS color for the HTML (Playwright) thumbnail path
 
 
+def image_bytes_to_data_uri(
+    image_bytes: bytes,
+    max_width_px: int | None = None,
+    max_height_px: int | None = None,
+    quality: int = THUMB_JPEG_QUALITY,
+) -> str:
+    """Downscale (keeping aspect ratio) to fit inside max_width_px x
+    max_height_px - scaled, never cropped, so a highlight near the bottom of a
+    tall page stays visible - then embed whichever of PNG / JPEG is smaller
+    (flat UI close-ups often compress better as PNG). Falls back to the
+    original bytes if Pillow is unavailable or decoding fails, so a
+    compression miss never loses the thumbnail itself."""
+    original = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+    try:
+        from io import BytesIO
+        from PIL import Image
+
+        img = Image.open(BytesIO(image_bytes)).convert("RGB")
+        img.thumbnail((max_width_px or img.width, max_height_px or img.height), Image.LANCZOS)
+        candidates = [original]
+        for fmt, kwargs in (("PNG", {"optimize": True}), ("JPEG", {"quality": quality, "optimize": True, "progressive": True})):
+            out = BytesIO()
+            img.save(out, format=fmt, **kwargs)
+            candidates.append(f"data:image/{fmt.lower()};base64," + base64.b64encode(out.getvalue()).decode("ascii"))
+        return min(candidates, key=len)
+    except Exception:
+        return original
+
+
+THUMB_DEDUPE_SCRIPT = (
+    "<script>document.querySelectorAll('img[data-same-as]').forEach(function(i){"
+    "var s=document.querySelector('img[data-thumb-id=\"'+i.dataset.sameAs+'\"]');if(s)i.src=s.src;});</script>"
+)
+
+
+def enforce_embedded_image_budget(html_text: str, budget_bytes: int = REPORT_EMBEDDED_IMAGE_BUDGET_BYTES) -> str:
+    """Shrinks the report's embedded images in two passes:
+    1. Dedupe - many changes on the same page reuse the identical full-page
+       screenshot, so only the first copy stays inline; later copies point at
+       it (data-same-as) and a tiny script fills them in on load.
+    2. Budget - keeps unique images in document order until their combined
+       size reaches budget_bytes, then swaps the rest for an empty src; the
+       surrounding text and source link still say what changed, and the
+       report stays under GitHub's per-file push limit."""
+    first_id: dict[str, int] = {}
+    used = 0
+
+    def replace(match: re.Match) -> str:
+        nonlocal used
+        uri = match.group(1)
+        if uri in first_id:
+            return f'src="" data-same-as="{first_id[uri]}"'
+        used += len(uri)
+        if used > budget_bytes:
+            return 'src="" data-omitted="report image budget exceeded"'
+        first_id[uri] = len(first_id)
+        return f'src="{uri}" data-thumb-id="{first_id[uri]}"'
+
+    out = DATA_URI_IMG_RE.sub(replace, html_text)
+    if "data-same-as=" in out:
+        out = out.replace("</body>", THUMB_DEDUPE_SCRIPT + "</body>", 1)
+    return out
+
+
 def render_pdf_page_thumbnail(
     pdf_path: Path,
     page_number: int,
@@ -364,7 +440,7 @@ def render_pdf_page_thumbnail(
             zoom = max_width_px / page.rect.width if page.rect.width else 1.0
             pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
             png_bytes = pixmap.tobytes("png")
-        return "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
+        return image_bytes_to_data_uri(png_bytes)
     except Exception:
         return None
 
@@ -506,8 +582,10 @@ def render_html_diff_thumbnail(
             }
         full_page_bytes = page.screenshot(full_page=True)
         closeup_bytes = page.screenshot(clip=clip, full_page=True)
-        full_page_thumb = "data:image/png;base64," + base64.b64encode(full_page_bytes).decode("ascii")
-        closeup_thumb = "data:image/png;base64," + base64.b64encode(closeup_bytes).decode("ascii")
+        full_page_thumb = image_bytes_to_data_uri(
+            full_page_bytes, FULL_PAGE_THUMB_MAX_WIDTH_PX, FULL_PAGE_THUMB_MAX_HEIGHT_PX, FULL_PAGE_THUMB_JPEG_QUALITY
+        )
+        closeup_thumb = image_bytes_to_data_uri(closeup_bytes)
         return full_page_thumb, closeup_thumb
     except Exception:
         return None
@@ -2123,10 +2201,10 @@ def render_reports(changes: list[dict], run: RunResult, shortfall: bool = False,
     (REPORT_DIR / "latest.md").write_text(report_text, encoding="utf-8")
     pages_url = os.getenv("GITHUB_PAGES_URL", "").strip()
     meity_href = f"{pages_url.rstrip('/')}/meity/index.html" if pages_url else "meity/index.html"
-    html_text = markdown_to_basic_html(
+    html_text = enforce_embedded_image_budget(markdown_to_basic_html(
         lines,
         cross_links=[(meity_href, "🇮🇳 MeitY 監控", "🇮🇳 MeitY Monitor")],
-    )
+    ))
     (REPORT_DIR / f"{now.strftime('%Y-%m-%d_%H-%M-%S')}.html").write_text(html_text, encoding="utf-8")
     (REPORT_DIR / "latest.html").write_text(html_text, encoding="utf-8")
     (PAGES_DIR / "index.html").write_text(html_text, encoding="utf-8")

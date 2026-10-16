@@ -56,6 +56,9 @@ timeout /t 60 /nobreak >nul
 goto :push_retry
 :push_failed
 echo %date% %time% git push failed after %PUSH_ATTEMPT% attempts with %PUSH_EXIT%>> logs\publish_pages.log
+rem Without this a failed push only reaches the log, and report links 404
+rem silently (2026-09-28: 18 days unnoticed).
+python send_telegram.py --push-failed-alert >> logs\publish_pages.log 2>&1
 :push_done
 
 del "%LOCKFILE%"
