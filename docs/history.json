@@ -1988,5 +1988,15 @@
     "high": 0,
     "medium": 0,
     "low": 1
+  },
+  {
+    "timestamp": "2026-10-22 08:07:55",
+    "file": "reports/2026-10-22_08-07-55.html",
+    "resources": 467,
+    "changes": 0,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0
   }
 ]
