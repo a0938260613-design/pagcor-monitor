@@ -2538,5 +2538,15 @@
     "high": 0,
     "medium": 0,
     "low": 0
+  },
+  {
+    "timestamp": "2026-11-18 20:04:59",
+    "file": "reports/2026-11-18_20-04-59.html",
+    "resources": 470,
+    "changes": 1,
+    "critical": 1,
+    "high": 0,
+    "medium": 0,
+    "low": 0
   }
 ]
